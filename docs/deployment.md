@@ -20,13 +20,16 @@ Driver staging, device creation/removal, and configuration changes require admin
 | `ElevationRequired` | Use an elevated installer or select `ElevationMode.Prompt`. |
 | `ElevationDenied` | UAC was cancelled/refused. Offer a deliberate retry or IT deployment. |
 | `AccessDenied` | Inspect native logs, file permissions, and machine policy. |
+| `PortNameInUse` | A requested standard COM name is present or reserved; named creation stops before creating a pair. |
 | `DriverBlocked` | A recognized signing/load error. Other signing failures can arrive as `ProcessFailed`; inspect device/Code Integrity evidence. |
 | `ProcessFailed` | Preserve the exit/log. setupc often collapses Windows errors to exit 1. |
 | `HelperFailed` | Check helper/runtime deployment, application-control policy, IPC, and package fingerprint. Changes may already have occurred. |
 | `Cancelled` / `TimedOut` | Completed changes remain. Helper disconnect requests cancellation; direct elevation may continue if Windows prevents termination. Inspect before retrying. |
 | `RebootRequired` | Stop the batch and let the user/admin arrange a reboot. The library never reboots. |
 
-`CommandResult.Success` describes the native command, not device readiness. Staging does not start a device. A pair needs both specific endpoints healthy. The CLI returns exit 2 when creation succeeded but readiness cannot be established.
+`CommandResult.Success` describes the native command, not device readiness. Staging does not start a device. A pair needs both specific endpoints healthy. `CreateNamedPair` additionally verifies names and both endpoint states. The CLI returns exit 2 when creation succeeded but readiness cannot be established.
+
+The [simple API](vspe-migration.md) discovers an adjacent helper and exposes VSPE-style Pair calls. Named creation runs its adaptive sequence in one elevated invocation and preserves `CreatedPairIndex` in partial-failure results. Use the helper from the same release as the library.
 
 The UAC refusal, alternate-credentials, and transport paths need validation under actual deployment policies. API support does not prove a domain permits elevation. WDAC/AppLocker may reject the helper or unsigned setup utility before the kernel checks the driver.
 

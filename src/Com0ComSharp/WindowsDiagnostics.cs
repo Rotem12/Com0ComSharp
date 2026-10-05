@@ -138,6 +138,22 @@ public static class WindowsDiagnostics
         return names;
     }
 
+    /// <summary>Combines COM reservations, present serial mappings and com0com endpoints. Does not request elevation.</summary>
+    public static IReadOnlyList<string> GetUnavailableComPortNames()
+    {
+        var names = new HashSet<string>(GetReservedComPortNames(), StringComparer.OrdinalIgnoreCase);
+        using var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DEVICEMAP\SERIALCOMM");
+        if (key is not null)
+            foreach (var value in key.GetValueNames())
+                if (key.GetValue(value) is string name) names.Add(name);
+        foreach (var pair in GetPairs())
+        {
+            if (pair.A is not null) names.Add(pair.A.EffectiveName);
+            if (pair.B is not null) names.Add(pair.B.EffectiveName);
+        }
+        return names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     internal static void EnsureWindows() { if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) throw new PlatformNotSupportedException("com0com is a Windows driver."); }
     private static string GetOperatingSystemVersion()
     {

@@ -17,37 +17,30 @@ Driver installation/removal requires administrator approval; uninstalling remove
 
 ## Install
 
-Download `Com0ComSharp.0.2.0.nupkg` from [Releases](https://github.com/Rotem12/Com0ComSharp/releases); the package is not on NuGet.org. Install it from the directory where you saved it:
+Download `Com0ComSharp.0.3.0.nupkg` from [Releases](https://github.com/Rotem12/Com0ComSharp/releases); the package is not on NuGet.org. Install it from the directory where you saved it:
 
 ```powershell
-dotnet add package Com0ComSharp --version 0.2.0 --source C:\Downloads\Com0ComSharp
+dotnet add package Com0ComSharp --version 0.3.0 --source C:\Downloads\Com0ComSharp
 ```
 
-You also need the native com0com driver files; they are not included in the release. Use the [driver extraction script](scripts/Get-DriverPackage.ps1) or an existing installation. The release includes a self-contained helper and a .NET Framework 4.8 helper archive.
+You also need the native com0com driver files. Use the [extraction script](scripts/Get-DriverPackage.ps1) or an existing installation. Place the matching release's `Com0ComSharp.Tool.exe` beside your app for automatic helper discovery. A .NET Framework 4.8 helper archive is also available.
 
 ## Create a port pair
 
 ```csharp
 using Com0ComSharp;
 
-var package = DriverPackage.Open(@"C:\MyApp\com0com");
-var client = new Com0ComClient(package, new ClientOptions(
-    elevation: ElevationMode.Prompt,
-    elevationHelperPath: @"C:\MyApp\Com0ComSharp.Tool.exe",
-    allowLegacyDriver: true));
+var api = new Com0ComApi(@"C:\MyApp\com0com",
+    new ClientOptions(allowLegacyDriver: true));
 
-var result = await client.ExecuteBatchAsync(new[]
-{
-    Com0ComCommand.InstallDriver(),
-    Com0ComCommand.CreatePair(
-        new PortSettings(portName: "COM#"),
-        new PortSettings(portName: "COM#"),
-        pairIndex: 25)
-});
-result.ThrowIfFailed();
+int id = api.CreatePair("COM21", "COM22");
+// Use COM21 and COM22 with SerialPort.
+api.DestroyDevice(id);
 ```
 
-`allowLegacyDriver` acknowledges the supplied driver’s signing status; it does not override Windows policy. The API targets C# 7.3 projects as well as newer C# versions.
+Async methods are available for UI apps. `CreateDevice("Pair", "21;22;0")` accepts basic VSPE Pair syntax; see the [migration guide](docs/vspe-migration.md). Ports persist until removed. Failures throw `Com0ComException` with diagnostic results. Advanced settings and batches remain available through `api.Client`.
+
+`allowLegacyDriver` acknowledges the driver’s signing status without overriding Windows policy. C# 7.3 is supported.
 
 ## More
 

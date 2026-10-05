@@ -8,7 +8,7 @@ public enum Com0ComOperation
 {
     InstallDriver, CreatePair, RemovePair, ChangePort, List, Help, BusyNames,
     UpdateDriver, ReloadDriver, UninstallDriver, EnableAll, DisableAll,
-    CleanOldInfFiles, UpdateFriendlyNames, ListFriendlyNames
+    CleanOldInfFiles, UpdateFriendlyNames, ListFriendlyNames, CreateNamedPair
 }
 
 /// <summary>An allowlisted setupc operation; there is no arbitrary shell command interface.</summary>
@@ -39,6 +39,11 @@ public sealed record Com0ComCommand
     public static Com0ComCommand InstallDriver() => new() { Operation = Com0ComOperation.InstallDriver };
     public static Com0ComCommand CreatePair(PortSettings? portA = null, PortSettings? portB = null, int? pairIndex = null, bool deferDriverUpdate = false)
         => new() { Operation = Com0ComOperation.CreatePair, PortA = portA, PortB = portB, PairIndex = pairIndex, DeferDriverUpdate = deferDriverUpdate };
+    /// <summary>Creates standard Windows COM ports with the requested names in one helper invocation.</summary>
+    public static Com0ComCommand CreateNamedPair(string portA, string portB, bool emulateBaudRate = false)
+        => new() { Operation = Com0ComOperation.CreateNamedPair,
+            PortA = new(portName: ComPortNames.Normalize(portA), emulateBaudRate: emulateBaudRate),
+            PortB = new(portName: ComPortNames.Normalize(portB), emulateBaudRate: emulateBaudRate) };
     public static Com0ComCommand RemovePair(int pairIndex) => new() { Operation = Com0ComOperation.RemovePair, PairIndex = pairIndex };
     public static Com0ComCommand ChangePort(string portId, PortSettings settings) => new() { Operation = Com0ComOperation.ChangePort, PortId = portId, PortA = settings };
 
@@ -54,6 +59,14 @@ public sealed record Com0ComCommand
         switch (Operation)
         {
             case Com0ComOperation.InstallDriver: args.Add("preinstall"); break;
+            case Com0ComOperation.CreateNamedPair:
+                ValidateNamedPair();
+                // This is the initial native step only. WindowsCommandRunner completes
+                // class conversion and naming using the actual allocated pair ID.
+                args.Add("install");
+                args.Add((PortA! with { PortName = "-" }).ToParameterString());
+                args.Add((PortB! with { PortName = "-" }).ToParameterString());
+                break;
             case Com0ComOperation.CreatePair:
                 if (PortA?.RealPortName is not null || PortB?.RealPortName is not null)
                     throw new ArgumentException("com0com ignores RealPortName during install; create COM# ports, then use ChangePort.");
@@ -86,5 +99,14 @@ public sealed record Com0ComCommand
                 }); break;
         }
         return args;
+    }
+
+    internal void ValidateNamedPair()
+    {
+        if (PairIndex.HasValue || PortA?.RealPortName is not null || PortB?.RealPortName is not null)
+            throw new ArgumentException("Named pairs allocate their own index; specify the desired COM names in PortName.");
+        var a = ComPortNames.Normalize(PortA?.PortName);
+        var b = ComPortNames.Normalize(PortB?.PortName);
+        if (a == b) throw new ArgumentException("The two endpoints must have different COM names.");
     }
 }

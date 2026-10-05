@@ -20,6 +20,18 @@ public sealed class WindowsCommandRunner : ICom0ComCommandRunner
         var elevated = WindowsDiagnostics.IsAdministrator();
         if (!elevated && options.Elevation == ElevationMode.RequireAdministrator)
             return new(command.Operation, 740, "Administrator access is required. Run from your elevated installer or select ElevationMode.Prompt.", FailureKind.ElevationRequired);
+        if (command.Operation == Com0ComOperation.CreateNamedPair)
+        {
+            if (!elevated)
+                return new(command.Operation, 740, "Named pair creation requires Com0ComSharp.Tool.exe for one elevation request. Set ElevationHelperPath or run from an elevated installer.", FailureKind.ElevationRequired);
+            using var setupTimeout = new CancellationTokenSource(options.Timeout);
+            using var setupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, setupTimeout.Token);
+            var result = await NamedPairSetup.RunAsync(command,
+                (step, token) => RunAsync(package, step, options, token),
+                WindowsDiagnostics.GetPairs, WindowsDiagnostics.GetUnavailableComPortNames, WindowsDiagnostics.GetDevices, setupCancellation.Token).ConfigureAwait(false);
+            return result.Failure == FailureKind.Cancelled && setupTimeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested
+                ? result with { Failure = FailureKind.TimedOut } : result;
+        }
         var directory = RuntimeCompatibility.CreateTemporaryDirectory("Com0ComSharp-");
         var log = Path.Combine(directory, "setup.log");
         // Reserve a private random path before an elevated process is given it.

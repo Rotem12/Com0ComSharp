@@ -1,10 +1,12 @@
 namespace Com0ComSharp;
 
 public enum ElevationMode { Prompt, RequireAdministrator }
-public enum FailureKind { None, ElevationRequired, ElevationDenied, DriverBlocked, AccessDenied, ProcessFailed, TimedOut, Cancelled, HelperFailed }
+public enum FailureKind { None, ElevationRequired, ElevationDenied, DriverBlocked, AccessDenied, ProcessFailed, TimedOut, Cancelled, HelperFailed, PortNameInUse, RebootRequired }
 
 public sealed record CommandResult(Com0ComOperation Operation, int ExitCode, string Output, FailureKind Failure, bool RebootRequired = false)
 {
+    /// <summary>For named pair creation, the actual allocated ID, also retained when later configuration fails.</summary>
+    public int? CreatedPairIndex { get; init; }
     public bool Success => ExitCode is 0 or 3010 or 1641 && Failure == FailureKind.None;
     public void ThrowIfFailed() { if (!Success) throw new Com0ComException(this); }
     internal static CommandResult FromExit(Com0ComOperation operation, int exitCode, string output)

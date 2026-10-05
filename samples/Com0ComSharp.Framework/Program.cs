@@ -29,6 +29,10 @@ internal static class Program
                 var signing = package.Inspect();
                 Console.WriteLine("Catalog integrity verified: " + signing.IntegrityVerified);
                 Console.WriteLine("Driver signer: " + signing.Driver.Signer);
+                var api = new Com0ComApi(args[1], new ClientOptions(elevation: ElevationMode.RequireAdministrator));
+                Console.WriteLine("Simple API devices: " + api.GetDevicesCount());
+                foreach (var device in api.GetDevices())
+                    Console.WriteLine("Pair " + api.GetDeviceInfo(device.Index).Index);
                 return signing.IntegrityVerified ? 0 : 1;
             }
             if (args.Length == 2 && args[0] == "--download")
@@ -43,5 +47,16 @@ internal static class Program
             Console.Error.WriteLine(error.Message);
             return 1;
         }
+    }
+
+    // A migration example, compiled as C# 7.3 but never run by this read-only sample.
+    private static void PairLifecycleExample(string nativeDirectory)
+    {
+        var api = new Com0ComApi(nativeDirectory, new ClientOptions(allowLegacyDriver: true));
+        int deviceId = api.CreatePair("COM21", "COM22");
+        api.SetBaudRateEmulation(deviceId, true);
+        api.DestroyDevice(deviceId);
+        deviceId = api.CreateDevice("Pair", "21;22;0");
+        api.DestroyPair(deviceId);
     }
 }
