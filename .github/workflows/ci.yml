@@ -19,8 +19,7 @@ jobs:
       - name: Verify packaged library in C# 7.3 Framework consumers
         shell: pwsh
         run: |
-          $packageFeed = (Resolve-Path .artifacts/packages).Path
-          dotnet restore samples/Com0ComSharp.Framework -p:UsePackagedLibrary=true --source $packageFeed --source https://api.nuget.org/v3/index.json
+          dotnet restore samples/Com0ComSharp.Framework -p:UsePackagedLibrary=true --configfile scripts/FrameworkConsumer.NuGet.config
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet build samples/Com0ComSharp.Framework -c Release --no-restore -p:UsePackagedLibrary=true
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -12,8 +12,7 @@ To verify the actual NuGet package rather than a project reference:
 
 ```powershell
 dotnet pack src/Com0ComSharp -c Release -o .artifacts/packages
-$packageFeed = (Resolve-Path .artifacts/packages).Path
-dotnet restore samples/Com0ComSharp.Framework -p:UsePackagedLibrary=true --source $packageFeed --source https://api.nuget.org/v3/index.json
+dotnet restore samples/Com0ComSharp.Framework -p:UsePackagedLibrary=true --configfile scripts/FrameworkConsumer.NuGet.config
 dotnet build samples/Com0ComSharp.Framework -c Release --no-restore -p:UsePackagedLibrary=true
 samples/Com0ComSharp.Framework/bin/Release/net48/Com0ComSharp.Framework.exe
 ```
