@@ -1,0 +1,112 @@
+{
+  "Date": "2026-10-05",
+  "Success": true,
+  "OperatingSystem": "Microsoft Windows NT 10.0.26200.0",
+  "Architecture": "X64",
+  "SecureBootEnabled": false,
+  "MemoryIntegrityRunning": true,
+  "DriverSha256": "E61C4943FB534F932193A81E8FBCB2F453E4B073A14159F9C161537B38D2BC38",
+  "PairIndex": 812345,
+  "DevicesDuringTest": [
+    {
+      "InstanceId": "COM0COM\\PORT\\CNCB812345",
+      "Description": "com0com - serial port emulator (COM4)",
+      "PortId": "CNCB812345",
+      "PortName": "COM4",
+      "ProblemCode": 0,
+      "Started": true,
+      "Healthy": true
+    },
+    {
+      "InstanceId": "COM0COM\\PORT\\CNCA812345",
+      "Description": "com0com - serial port emulator (COM3)",
+      "PortId": "CNCA812345",
+      "PortName": "COM3",
+      "ProblemCode": 0,
+      "Started": true,
+      "Healthy": true
+    },
+    {
+      "InstanceId": "ROOT\\COM0COM\\0000",
+      "Description": "com0com - bus for serial port pair emulator 812345 (COM# <-> COM#)",
+      "PortId": null,
+      "PortName": null,
+      "ProblemCode": 0,
+      "Started": true,
+      "Healthy": true
+    }
+  ],
+  "BinaryTransfer": {
+    "A": "COM3",
+    "B": "COM4",
+    "BytesEachDirection": 512,
+    "Success": true
+  },
+  "TransferAfterChange": {
+    "A": "COM42",
+    "B": "COM4",
+    "Success": true
+  },
+  "OperationResults": [
+    {
+      "Step": "helper-ipc",
+      "ExitCode": 0,
+      "Success": true,
+      "RebootRequired": false
+    },
+    {
+      "Step": "install",
+      "ExitCode": 0,
+      "Success": true,
+      "RebootRequired": false
+    },
+    {
+      "Step": "create",
+      "ExitCode": 0,
+      "Success": true,
+      "RebootRequired": false
+    },
+    {
+      "Step": "rename-and-emulation",
+      "ExitCode": 0,
+      "Success": true,
+      "RebootRequired": false
+    },
+    {
+      "Step": "remove-pair",
+      "ExitCode": 0,
+      "Success": true,
+      "RebootRequired": false
+    },
+    {
+      "Step": "uninstall-driver",
+      "ExitCode": 0,
+      "Success": true,
+      "RebootRequired": false
+    }
+  ],
+  "HelperTestContext": "Elevated same-account parent; unelevated/alternate-admin helper path not live-tested",
+  "Cleanup": {
+    "Failed": false,
+    "PresentCom0ComDevices": 0,
+    "ServicePresent": false,
+    "RemainingDriverStoreInfPackages": 0,
+    "DriverFilePresent": false,
+    "OriginalComReservations": [
+      "COM1",
+      "COM6",
+      "COM7"
+    ],
+    "FinalComReservations": [
+      "COM1",
+      "COM6",
+      "COM7"
+    ],
+    "SecureBootUnchanged": true,
+    "MemoryIntegrityUnchanged": true,
+    "Vspe": {
+      "Status": "OK",
+      "InstanceId": "ROOT\\ETERLOGIC_VSPE_BUS\\0000"
+    }
+  }
+}
