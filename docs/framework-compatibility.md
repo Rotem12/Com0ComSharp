@@ -22,7 +22,7 @@ For a Framework 4.6.2 application that uses the optional download API, enable sy
 ## Verification on 2026-10-05
 
 - Release solution build: zero warnings/errors across all library and tool targets.
-- 78 tests on each of the four library targets: 312 test executions. Coverage includes Windows argument parsing, process wait cancellation, protected pipe JSON responses, constructor-based API compatibility, bounded hash-verified downloads, VSPE Pair syntax, adaptive naming, device failures and partial results.
+- 79 tests on each of the four library targets: 316 test executions. Coverage includes Windows argument parsing, process wait cancellation, protected pipe JSON responses, constructor-based API compatibility, bounded hash-verified downloads, VSPE Pair syntax, adaptive naming, device failures and partial results.
 - C# 7.3 sample builds as a NuGet consumer for Framework 4.6.2, 4.7.2, 4.8, and 4.8.1, then runs read-only discovery and real catalog/member signature inspection on the Windows 11 x64 host. The older target also completes a SHA-256-verified HTTPS download using the sample's TLS configuration.
 - OS version diagnostics use the native version result, avoiding Framework's unmanifested `Environment.OSVersion` compatibility value.
 

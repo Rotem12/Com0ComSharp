@@ -57,6 +57,8 @@ internal static class NamedPairSetup
                     if (!step.Success) return Result(step.ExitCode, step.Failure, reboot: step.RebootRequired);
                     if (step.RebootRequired) return Result(step.ExitCode, FailureKind.RebootRequired, "Restart Windows before continuing pair configuration.", true);
                     current = getPairs().SingleOrDefault(p => p.Index == createdIndex.Value);
+                    if (current?.A is null || current.B is null)
+                        return Result(-1, FailureKind.ProcessFailed, "A pair endpoint disappeared during configuration. Inspect the partial pair before retrying.");
                     var port = endpoint.Id == current?.A?.Id ? current.A : endpoint.Id == current?.B?.Id ? current.B : null;
                     if (port is null || !port.PortName.Equals("COM#", StringComparison.OrdinalIgnoreCase)
                         || (settings.RealPortName is not null && !port.EffectiveName.Equals(endpoint.Name, StringComparison.OrdinalIgnoreCase)))

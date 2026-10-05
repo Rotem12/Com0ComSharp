@@ -81,6 +81,16 @@ public sealed class SimpleApiTests
         Assert.Equal("CNCB18", backend.Pairs.Single(p => p.Index == 18).B!.EffectiveName);
     }
 
+    [Fact]
+    public async Task DisappearingEndpointKeepsPartialResultAndStopsConfiguration()
+    {
+        var backend = new PairBackend { DropAOnBConversion = true };
+        var result = await backend.CreateAsync();
+        Assert.Equal(FailureKind.ProcessFailed, result.Failure);
+        Assert.Equal(18, result.CreatedPairIndex);
+        Assert.Equal(4, backend.Commands.Count);
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(4)]
@@ -204,6 +214,7 @@ public sealed class SimpleApiTests
         public IReadOnlyList<string> Reserved = new[] { "COM1" };
         public bool IgnoreRename;
         public bool DeviceNameMismatch;
+        public bool DropAOnBConversion;
         public int FailStep, RebootStep;
         public uint DeviceProblem;
         public string? InstallOutput;
@@ -248,6 +259,8 @@ public sealed class SimpleApiTests
             }
             var updated = new VirtualPort(old.Id, values["PortName"], values);
             Pairs = Pairs.Select(p => p.Index != 18 ? p : old.Id == p.A!.Id ? p with { A = updated } : p with { B = updated }).ToArray();
+            if (DropAOnBConversion && Commands.Count == 4)
+                Pairs = Pairs.Select(p => p.Index == 18 ? p with { A = null } : p).ToArray();
             return Task.FromResult(new CommandResult(command.Operation, 0, "native change", FailureKind.None, Commands.Count == RebootStep));
         }
     }

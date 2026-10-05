@@ -32,7 +32,7 @@ Memory Integrity compatibility is an additional requirement. Its enabled state a
 
 Windows **10.0.26200**, x64; development session **not elevated**. Read-only native diagnostics report **Secure Boot disabled** and **Memory Integrity running**. No present com0com devices were found. VSPE was not modified. COM1/COM6/COM7 were reserved at baseline.
 
-The original 0.1.0 lifecycle verification used .NET 8/.NET 10 Release builds and 36 tests per target. Version 0.2.0 adds Framework 4.6.2/4.8 assemblies and passes 51 tests per library target. Version 0.3.0 adds the [simple VSPE-style Pair facade](vspe-migration.md) and passes 78 tests per target, with zero build warnings/errors. Its complete adaptive elevated sequence remains untested on real devices. Read-only C# diagnostics agree with Windows/registry observations and verify catalog membership. See [Framework validation](framework-compatibility.md) for package-consumer evidence and the deferred Framework mutation/elevation tests.
+The original 0.1.0 lifecycle verification used .NET 8/.NET 10 Release builds and 36 tests per target. Version 0.2.0 adds Framework 4.6.2/4.8 assemblies and passes 51 tests per library target. Version 0.3.0 adds the [simple VSPE-style Pair facade](vspe-migration.md) and passes 79 tests per target, with zero build warnings/errors. Its complete adaptive elevated sequence remains untested on real devices. Read-only C# diagnostics agree with Windows/registry observations and verify catalog membership. See [Framework validation](framework-compatibility.md) for package-consumer evidence and the deferred Framework mutation/elevation tests.
 
 The temporary lifecycle test **passed on this PC** with Memory Integrity running and Secure Boot disabled:
 
