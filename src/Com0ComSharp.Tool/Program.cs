@@ -38,7 +38,7 @@ try
         else throw new ArgumentException("Unknown option or missing value: " + key);
     }
     string Required(string key) => options.TryGetValue(key, out var value) ? value : throw new ArgumentException("Missing " + key);
-    string? Optional(string key) => options.GetValueOrDefault(key);
+    string? Optional(string key) => options.TryGetValue(key, out var value) ? value : null;
     if (args[0] == "download") { Console.WriteLine(await DriverDownload.DownloadInstallerAsync(Required("--out"))); return 0; }
     if (args[0] == "diagnose")
     {
@@ -49,7 +49,12 @@ try
     if (args[0] == "list") { Console.WriteLine(JsonSerializer.Serialize(WindowsDiagnostics.GetPairs(), json)); return 0; }
     var native = Optional("--package") is string specified ? DriverPackage.Open(specified) : WindowsDiagnostics.FindInstalledPackage() ?? throw new ArgumentException("Specify --package with the complete extracted package directory.");
     var index = Optional("--index") is string number ? int.Parse(number, CultureInfo.InvariantCulture) : (int?)null;
+#if NETFRAMEWORK
+    using var currentProcess = System.Diagnostics.Process.GetCurrentProcess();
+    var self = currentProcess.MainModule?.FileName;
+#else
     var self = Environment.ProcessPath;
+#endif
     var helper = self is not null && !Path.GetFileNameWithoutExtension(self).Equals("dotnet", StringComparison.OrdinalIgnoreCase) ? self : null;
     var client = new Com0ComClient(native, new()
     {

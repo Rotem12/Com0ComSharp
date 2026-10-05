@@ -39,6 +39,16 @@ public sealed class Com0ComException(CommandResult result) : Exception($"{result
 
 public sealed record ClientOptions
 {
+    public ClientOptions() { }
+
+    /// <summary>Constructor-based options for consumers using C# 7.3.</summary>
+    public ClientOptions(ElevationMode elevation = ElevationMode.Prompt, TimeSpan? timeout = null,
+        string? elevationHelperPath = null, bool allowLegacyDriver = false)
+    {
+        Elevation = elevation; Timeout = timeout ?? TimeSpan.FromMinutes(3);
+        ElevationHelperPath = elevationHelperPath; AllowLegacyDriver = allowLegacyDriver;
+    }
+
     public ElevationMode Elevation { get; init; } = ElevationMode.Prompt;
     public TimeSpan Timeout { get; init; } = TimeSpan.FromMinutes(3);
     /// <summary>Path to the published Com0ComSharp.Tool.exe, enabling one UAC prompt per batch.</summary>

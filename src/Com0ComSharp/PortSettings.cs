@@ -25,6 +25,23 @@ public sealed record PinMapping(PinSource Source, bool Inverted = false)
 /// <summary>Null properties leave a setting unspecified; changes preserve unspecified settings.</summary>
 public sealed record PortSettings
 {
+    public PortSettings() { }
+
+    /// <summary>Constructor-based configuration for consumers using C# 7.3; null settings remain unspecified.</summary>
+    public PortSettings(string? portName = null, string? realPortName = null, bool? emulateBaudRate = null,
+        bool? emulateOverrun = null, bool? plugInMode = null, bool? exclusiveMode = null, bool? hiddenMode = null,
+        bool? allDataBits = null, decimal? noiseProbability = null, uint? additionalReadTotalTimeout = null,
+        uint? additionalReadIntervalTimeout = null, PinMapping? cts = null, PinMapping? dsr = null,
+        PinMapping? dcd = null, PinMapping? ring = null)
+    {
+        PortName = portName; RealPortName = realPortName;
+        EmulateBaudRate = emulateBaudRate; EmulateOverrun = emulateOverrun;
+        PlugInMode = plugInMode; ExclusiveMode = exclusiveMode; HiddenMode = hiddenMode; AllDataBits = allDataBits;
+        NoiseProbability = noiseProbability; AdditionalReadTotalTimeout = additionalReadTotalTimeout;
+        AdditionalReadIntervalTimeout = additionalReadIntervalTimeout;
+        Cts = cts; Dsr = dsr; Dcd = dcd; Ring = ring;
+    }
+
     /// <summary>Use COM# for automatic allocation in Windows' standard Ports class.</summary>
     public string? PortName { get; init; }
     /// <summary>Only supported by ChangePortAsync after a COM# port exists.</summary>
@@ -69,7 +86,7 @@ public sealed record PortSettings
         if (Dsr is not null) values.Add("dsr=" + Dsr.Serialize());
         if (Dcd is not null) values.Add("dcd=" + Dcd.Serialize());
         if (Ring is not null) values.Add("ri=" + Ring.Serialize());
-        return values.Count == 0 ? "*" : string.Join(',', values);
+        return values.Count == 0 ? "*" : string.Join(",", values);
     }
 
     internal static void ValidatePortName(string value)

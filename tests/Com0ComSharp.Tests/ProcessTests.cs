@@ -6,7 +6,7 @@ namespace Com0ComSharp.Tests;
 
 public sealed class ProcessTests : IDisposable
 {
-    private readonly string directory = Directory.CreateTempSubdirectory("com0com-tests-").FullName;
+    private readonly string directory = RuntimeCompatibility.CreateTemporaryDirectory("com0com-tests-");
     private DriverPackage CreatePackage()
     {
         foreach (var file in DriverPackage.RequiredFiles) File.WriteAllBytes(Path.Combine(directory, file), PeBytes());
@@ -26,7 +26,7 @@ public sealed class ProcessTests : IDisposable
     {
         var start = WindowsCommandRunner.BuildStartInfo(CreatePackage(), new[] { "--silent", "list" }, @"C:\Temp\setup.log", true);
         Assert.Equal("runas", start.Verb); Assert.True(start.UseShellExecute);
-        Assert.False(start.RedirectStandardOutput); Assert.Equal(@"C:\Temp\setup.log", start.ArgumentList[1]);
+        Assert.False(start.RedirectStandardOutput); Assert.Equal(@"C:\Temp\setup.log", GetArguments(start)[1]);
         Assert.Equal(System.Diagnostics.ProcessWindowStyle.Hidden, start.WindowStyle);
     }
 
@@ -35,15 +35,16 @@ public sealed class ProcessTests : IDisposable
     {
         var command = Com0ComCommand.CreatePair(new() { PortName = "COM#" }, new() { PortName = "COM#" }, 812345, true);
         var start = WindowsCommandRunner.BuildStartInfo(CreatePackage(), command.ToArguments(), @"C:\Temp\setup.log", true);
-        Assert.Equal(8, start.ArgumentList.Count);
-        Assert.Equal("PortName=COM#", start.ArgumentList[^1]);
+        var arguments = GetArguments(start);
+        Assert.Equal(8, arguments.Count);
+        Assert.Equal("PortName=COM#", arguments[arguments.Count - 1]);
     }
 
     [Fact]
     public void HelperCapturesStdoutWithoutPassingWhitespaceLogPathToNativeParser()
     {
         var start = WindowsCommandRunner.BuildStartInfo(CreatePackage(), Com0ComCommand.CreatePair(pairIndex: 1).ToArguments(), @"C:\Users\Test User\setup.log", false);
-        Assert.DoesNotContain("--output", start.ArgumentList); Assert.True(start.RedirectStandardOutput);
+        Assert.DoesNotContain("--output", GetArguments(start)); Assert.True(start.RedirectStandardOutput);
     }
 
     [Fact]
@@ -93,6 +94,16 @@ public sealed class ProcessTests : IDisposable
             Count++;
             return Task.FromResult(new CommandResult(command.Operation, Count == 1 ? 0 : 1, "fixture", Count == 1 ? FailureKind.None : FailureKind.ProcessFailed));
         }
+    }
+    private static IReadOnlyList<string> GetArguments(System.Diagnostics.ProcessStartInfo start)
+    {
+#if NETFRAMEWORK
+        // These setupc fixtures deliberately contain no whitespace; more complex
+        // quoting is checked against Windows' own parser in CompatibilityTests.
+        return start.Arguments.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+#else
+        return start.ArgumentList.ToArray();
+#endif
     }
     public void Dispose() => Directory.Delete(directory, true);
 }

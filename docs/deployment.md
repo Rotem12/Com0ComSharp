@@ -5,7 +5,7 @@
 1. Discover the installed package and inspect present devices without UAC. Reuse already provisioned ports when healthy.
 2. Before first provisioning, explain that administrator approval is required. Inspect the package; the supplied legacy version also needs an explicit compatibility acknowledgement.
 3. Deploy reviewed native files and the helper in an administrator-protected application directory. For managed PCs, have IT provision a validated driver and app-owned pairs through the normal elevated installer/device-management system.
-4. Submit staging and port configuration as one batch. The helper requests UAC once when needed, executes sequentially, and exits. Omit the helper path for direct execution from an already elevated installer. Publish it self-contained to avoid missing .NET runtimes.
+4. Submit staging and port configuration as one batch. The helper requests UAC once when needed, executes sequentially, and exits. Omit the helper path for direct execution from an already elevated installer. Use the complete Framework 4.8 helper archive or the self-contained modern helper, which includes its own runtime.
 5. Check reboot requirements, device problem codes, and `Healthy` status. Perform an application-level serial handshake before enabling dependent features.
 6. Store the pair index/names your app owns. Remove only those pairs during app uninstall; do not globally uninstall a shared driver automatically.
 
@@ -41,6 +41,8 @@ Signature checks use cached certificate retrieval without online revocation refr
 Upstream setupc is an ANSI-era utility with a 1024-byte buffer and only eight argument slots. Its second-stage parser splits whitespace even inside quotes. The wrapper limits native arguments, waits for PnP completion in managed code, and captures stdout inside the helper. Direct per-command elevation uses a whitespace-free short log path; when none exists, use the helper. Validate non-ASCII installation/user paths on the target locale. Unsafe parameter delimiters and shell fragments are rejected.
 
 ## Restricted PC limits
+
+Framework 4.6.2 through 4.8.1 applications use the same elevation flow. They can deploy the Framework helper when 4.8+ is installed, or the self-contained modern helper. See [Framework deployment details](framework-compatibility.md) for dependency DLLs, binding redirects, old C# consumers, and TLS settings.
 
 Ordinary users cannot install this kernel driver or create its devices through a supported user-only path. When elevation or driver policy prevents deployment, use IT provisioning or obtain an accepted driver. The library never enables test signing, disables Secure Boot/Memory Integrity, removes Code Integrity policies, installs certificates, releases other COM reservations, or changes device-install policy.
 

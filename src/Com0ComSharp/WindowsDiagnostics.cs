@@ -34,7 +34,7 @@ public static class WindowsDiagnostics
         if (NtQuerySystemInformation(103, ref info, info.Length, out _) >= 0) memoryIntegrity = (info.Options & 0x400) != 0;
         else notes.Add("Running Memory Integrity state is unavailable.");
         notes.Add("Secure Boot, Memory Integrity, WDAC and the Windows Driver Policy can independently restrict drivers. There is no universal pre-install compatibility guarantee.");
-        return new(Environment.OSVersion.VersionString, RuntimeInformation.OSArchitecture.ToString(), IsAdministrator(), secureBoot, memoryIntegrity, GetDevices(), notes);
+        return new(GetOperatingSystemVersion(), RuntimeInformation.OSArchitecture.ToString(), IsAdministrator(), secureBoot, memoryIntegrity, GetDevices(), notes);
     }
 
     public static DriverPackage? FindInstalledPackage()
@@ -138,7 +138,17 @@ public static class WindowsDiagnostics
         return names;
     }
 
-    internal static void EnsureWindows() { if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("com0com is a Windows driver."); }
+    internal static void EnsureWindows() { if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) throw new PlatformNotSupportedException("com0com is a Windows driver."); }
+    private static string GetOperatingSystemVersion()
+    {
+        // Framework's Environment.OSVersion can report Windows 8 for an existing
+        // app without a Windows 10 compatibility manifest. Native diagnostics
+        // must describe the installed OS rather than that compatibility view.
+        var version = new WindowsVersionInfo { Size = (uint)Marshal.SizeOf<WindowsVersionInfo>(), ServicePack = "" };
+        return RtlGetVersion(ref version) >= 0
+            ? $"Microsoft Windows NT {version.Major}.{version.Minor}.{version.Build}.0"
+            : Environment.OSVersion.VersionString;
+    }
     private static string DecodePin(uint number)
     {
         var value = (number & 0x7FFFFFFF) switch
@@ -156,6 +166,13 @@ public static class WindowsDiagnostics
     }
     [StructLayout(LayoutKind.Sequential)] private struct DeviceInfo { public uint Size; public Guid ClassGuid; public uint DevInst; public IntPtr Reserved; }
     [StructLayout(LayoutKind.Sequential)] private struct CodeIntegrityInfo { public uint Length, Options; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct WindowsVersionInfo
+    {
+        public uint Size, Major, Minor, Build, Platform;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string ServicePack;
+    }
+    [DllImport("ntdll.dll", CharSet = CharSet.Unicode)] private static extern int RtlGetVersion(ref WindowsVersionInfo version);
     [DllImport("ntdll.dll")] private static extern int NtQuerySystemInformation(int informationClass, ref CodeIntegrityInfo info, uint length, out uint returnedLength);
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr SetupDiGetClassDevsW(IntPtr guid, string? enumerator, IntPtr window, uint flags);
     [DllImport("setupapi.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetupDiEnumDeviceInfo(IntPtr handle, uint index, ref DeviceInfo data);

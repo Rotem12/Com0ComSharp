@@ -19,7 +19,8 @@ public static class ElevationBroker
     {
         var helper = Path.GetFullPath(options.ElevationHelperPath!);
         if (!File.Exists(helper)) throw new FileNotFoundException("Publish Com0ComSharp.Tool and set ElevationHelperPath to its .exe.", helper);
-        var request = new Request(package.DirectoryPath, new(package.Fingerprint()), commands, options.AllowLegacyDriver, checked((int)options.Timeout.TotalMilliseconds));
+        var hashes = package.Fingerprint().ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);
+        var request = new Request(package.DirectoryPath, hashes, commands, options.AllowLegacyDriver, checked((int)options.Timeout.TotalMilliseconds));
         var payload = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(request));
         if (payload.Length > 24000) throw new ArgumentException("This plan exceeds the Windows command-line limit; use a smaller batch.");
         var name = "Com0ComSharp-" + Guid.NewGuid().ToString("N");
@@ -29,9 +30,9 @@ public static class ElevationBroker
         acl.AddAccessRule(new(identity.User!, PipeAccessRights.FullControl, AccessControlType.Allow));
         acl.AddAccessRule(new(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         acl.AddAccessRule(new(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
-        using var pipe = NamedPipeServerStreamAcl.Create(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 4096, 4096, acl);
+        using var pipe = RuntimeCompatibility.CreateResultPipe(name, acl);
         var start = new ProcessStartInfo(helper) { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden, WorkingDirectory = Path.GetDirectoryName(helper)! };
-        start.ArgumentList.Add("--broker"); start.ArgumentList.Add(name); start.ArgumentList.Add(payload);
+        RuntimeCompatibility.SetArguments(start, new[] { "--broker", name, payload });
         Process? process = null;
         CommandResult Failure(FailureKind kind, int code, string text) => new(commands[0].Operation, code, text, kind);
         try
@@ -43,7 +44,7 @@ public static class ElevationBroker
             using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(options.Timeout.TotalMilliseconds * commands.Length + 30000));
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
             var connect = pipe.WaitForConnectionAsync(linked.Token);
-            var exit = process.WaitForExitAsync(linked.Token);
+            var exit = RuntimeCompatibility.WaitForExitAsync(process, linked.Token);
             if (await Task.WhenAny(connect, exit).ConfigureAwait(false) == exit && !pipe.IsConnected)
                 return new([Failure(FailureKind.HelperFailed, process.ExitCode, "Elevation helper exited before connecting. Check installed .NET runtime and application-control policy.")], commands.Length);
             await connect.ConfigureAwait(false);
@@ -53,7 +54,7 @@ public static class ElevationBroker
             var response = new StringBuilder();
             var buffer = new char[4096];
             int count;
-            while ((count = await reader.ReadAsync(buffer.AsMemory(), linked.Token).ConfigureAwait(false)) != 0)
+            while ((count = await RuntimeCompatibility.ReadTextAsync(reader, buffer, linked.Token).ConfigureAwait(false)) != 0)
             {
                 response.Append(buffer, 0, count);
                 if (response.Length > 8_000_000) throw new InvalidDataException("The helper response exceeded its size limit.");
@@ -108,7 +109,7 @@ public static class ElevationBroker
         }
         try
         {
-            await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true);
+            using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true);
             await writer.WriteAsync(JsonSerializer.Serialize(result)).ConfigureAwait(false);
             await writer.FlushAsync().ConfigureAwait(false);
             return result.Success ? 0 : 1;
@@ -120,7 +121,7 @@ public static class ElevationBroker
     {
         try
         {
-            await pipe.ReadAsync(new byte[1].AsMemory(), stop).ConfigureAwait(false);
+            await RuntimeCompatibility.WaitAsync(pipe.ReadAsync(new byte[1], 0, 1, stop), stop).ConfigureAwait(false);
             operationCancellation.Cancel(); // EOF or an explicit cancellation byte.
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 
 namespace Com0ComSharp;
@@ -13,6 +14,19 @@ public enum Com0ComOperation
 /// <summary>An allowlisted setupc operation; there is no arbitrary shell command interface.</summary>
 public sealed record Com0ComCommand
 {
+    public Com0ComCommand() { }
+
+    /// <summary>Constructor-based typed command for consumers using C# 7.3.</summary>
+    [SetsRequiredMembers]
+    public Com0ComCommand(Com0ComOperation operation, int? pairIndex = null, string? portId = null,
+        PortSettings? portA = null, PortSettings? portB = null, string? pattern = null,
+        bool deferDriverUpdate = false, int waitSeconds = 30)
+    {
+        Operation = operation; PairIndex = pairIndex; PortId = portId;
+        PortA = portA; PortB = portB; Pattern = pattern;
+        DeferDriverUpdate = deferDriverUpdate; WaitSeconds = waitSeconds;
+    }
+
     public required Com0ComOperation Operation { get; init; }
     public int? PairIndex { get; init; }
     public string? PortId { get; init; }
@@ -56,7 +70,7 @@ public sealed record Com0ComCommand
                     throw new ArgumentException("Use an endpoint identifier such as CNCA0 or CNCB0.");
                 args.Add("change"); args.Add(PortId); args.Add((PortA ?? throw new ArgumentException("Settings are required.")).ToParameterString()); break;
             case Com0ComOperation.BusyNames:
-                if (string.IsNullOrWhiteSpace(Pattern) || !Regex.IsMatch(Pattern, @"\A[A-Za-z0-9_?*#-]{1,64}\z", RegexOptions.CultureInvariant))
+                if (Pattern is null || string.IsNullOrWhiteSpace(Pattern) || !Regex.IsMatch(Pattern, @"\A[A-Za-z0-9_?*#-]{1,64}\z", RegexOptions.CultureInvariant))
                     throw new ArgumentException("Busy-name patterns may contain ASCII port-name characters, * and ?.");
                 args.Add("busynames"); args.Add(Pattern); break;
             case Com0ComOperation.EnableAll: args.AddRange(["enable", "all"]); break;

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net462;net472;net48;net481</TargetFrameworks>
+    <LangVersion>7.3</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UsePackagedLibrary)' != 'true'">
+    <ProjectReference Include="../../src/Com0ComSharp/Com0ComSharp.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UsePackagedLibrary)' == 'true'">
+    <PackageReference Include="Com0ComSharp" Version="0.2.0" />
+  </ItemGroup>
+</Project>

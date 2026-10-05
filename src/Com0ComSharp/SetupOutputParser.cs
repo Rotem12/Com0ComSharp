@@ -17,13 +17,13 @@ public static class SetupOutputParser
             foreach (var item in match.Groups["parameters"].Value.Split(','))
             {
                 var equals = item.IndexOf('=');
-                if (equals > 0) values[item[..equals].Trim()] = item[(equals + 1)..].Trim();
+                if (equals > 0) values[item.Substring(0, equals).Trim()] = item.Substring(equals + 1).Trim();
             }
             if (!values.TryGetValue("PortName", out var name)) continue;
             var id = match.Groups["id"].Value.ToUpperInvariant();
             ports[id] = new(id, name, new ReadOnlyDictionary<string, string>(values));
         }
-        return ports.Values.GroupBy(p => int.Parse(p.Id[4..], System.Globalization.CultureInfo.InvariantCulture))
+        return ports.Values.GroupBy(p => int.Parse(p.Id.Substring(4), System.Globalization.CultureInfo.InvariantCulture))
             .OrderBy(g => g.Key).Select(g => new VirtualPortPair(g.Key, g.FirstOrDefault(p => p.Id[3] == 'A'), g.FirstOrDefault(p => p.Id[3] == 'B'))).ToArray();
     }
 }

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Net.Http;
 
 namespace Com0ComSharp;
 
@@ -20,23 +21,26 @@ public static class DriverDownload
             using var response = await client.GetAsync(InstallerUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength is > 5_000_000) throw new InvalidDataException("Unexpected installer size.");
-            await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
-            await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
+            using (var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
             {
                 var buffer = new byte[81920];
                 long total = 0;
                 int read;
-                while ((read = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) != 0)
+                while ((read = await RuntimeCompatibility.WaitAsync(input.ReadAsync(buffer, 0, buffer.Length, cancellationToken), cancellationToken).ConfigureAwait(false)) != 0)
                 {
                     total += read;
                     if (total > 5_000_000) throw new InvalidDataException("Unexpected installer size.");
-                    await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                    await output.WriteAsync(buffer, 0, read, cancellationToken).ConfigureAwait(false);
                 }
             }
+            cancellationToken.ThrowIfCancellationRequested();
             using (var stream = File.OpenRead(temporary))
-                if (!Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false)).Equals(InstallerSha256, StringComparison.OrdinalIgnoreCase))
+            using (var hash = SHA256.Create())
+                if (!RuntimeCompatibility.ToHexString(hash.ComputeHash(stream)).Equals(InstallerSha256, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("The installer does not match the pinned SHA-256 hash.");
-            File.Move(temporary, destination, false);
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporary, destination);
             return destination;
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); if (httpClient is null) client.Dispose(); }

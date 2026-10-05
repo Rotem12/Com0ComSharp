@@ -16,10 +16,30 @@ jobs:
       - run: dotnet build Com0ComSharp.sln -c Release --no-restore
       - run: dotnet test tests/Com0ComSharp.Tests -c Release --no-build
       - run: dotnet pack src/Com0ComSharp -c Release --no-build -o .artifacts/packages
-      - run: dotnet publish src/Com0ComSharp.Tool -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o .artifacts/tool
+      - name: Verify packaged library in C# 7.3 Framework consumers
+        shell: pwsh
+        run: |
+          $packageFeed = (Resolve-Path .artifacts/packages).Path
+          dotnet restore samples/Com0ComSharp.Framework -p:UsePackagedLibrary=true --source $packageFeed --source https://api.nuget.org/v3/index.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build samples/Com0ComSharp.Framework -c Release --no-restore -p:UsePackagedLibrary=true
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($framework in @('net462', 'net472', 'net48', 'net481')) {
+            & "samples/Com0ComSharp.Framework/bin/Release/$framework/Com0ComSharp.Framework.exe"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - run: dotnet publish src/Com0ComSharp.Tool -f net8.0-windows -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o .artifacts/tool
+      - run: dotnet publish src/Com0ComSharp.Tool -f net48 -c Release -o .artifacts/tool-net48
+      - name: Verify and archive Framework helper
+        shell: pwsh
+        run: |
+          & .artifacts/tool-net48/Com0ComSharp.Tool.exe diagnose
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path .artifacts/tool-net48/* -DestinationPath .artifacts/Com0ComSharp.Tool.net48.zip -Force
       - uses: actions/upload-artifact@v4
         with:
           name: Com0ComSharp
           path: |
             .artifacts/packages/*.nupkg
             .artifacts/tool/Com0ComSharp.Tool.exe
+            .artifacts/Com0ComSharp.Tool.net48.zip

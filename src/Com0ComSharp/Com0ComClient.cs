@@ -34,10 +34,10 @@ public sealed class Com0ComClient
     /// <summary>Runs sequentially and stops at the first failure. With the helper, a non-admin receives one UAC prompt for the entire batch.</summary>
     public async Task<BatchResult> ExecuteBatchAsync(IEnumerable<Com0ComCommand> commands, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(commands);
+        if (commands is null) throw new ArgumentNullException(nameof(commands));
         var plan = commands.ToArray();
         if (plan.Length > 100) throw new ArgumentException("Use batches of at most 100 operations.");
-        foreach (var command in plan) { ArgumentNullException.ThrowIfNull(command); command.ToArguments(); }
+        foreach (var command in plan) { if (command is null) throw new ArgumentNullException(nameof(command)); command.ToArguments(); }
         cancellationToken.ThrowIfCancellationRequested();
         if (plan.Length == 0) return new([], 0);
         ValidatePackagePolicy(Package, plan, Options.AllowLegacyDriver);

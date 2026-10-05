@@ -20,7 +20,7 @@ public sealed class WindowsCommandRunner : ICom0ComCommandRunner
         var elevated = WindowsDiagnostics.IsAdministrator();
         if (!elevated && options.Elevation == ElevationMode.RequireAdministrator)
             return new(command.Operation, 740, "Administrator access is required. Run from your elevated installer or select ElevationMode.Prompt.", FailureKind.ElevationRequired);
-        var directory = Directory.CreateTempSubdirectory("Com0ComSharp-").FullName;
+        var directory = RuntimeCompatibility.CreateTemporaryDirectory("Com0ComSharp-");
         var log = Path.Combine(directory, "setup.log");
         // Reserve a private random path before an elevated process is given it.
         using (File.Create(log)) { }
@@ -44,11 +44,11 @@ public sealed class WindowsCommandRunner : ICom0ComCommandRunner
             var stderr = elevated ? process.StandardError.ReadToEndAsync() : Task.FromResult("");
             using var timeout = new CancellationTokenSource(options.Timeout);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
-            try { await process.WaitForExitAsync(linked.Token).ConfigureAwait(false); }
+            try { await RuntimeCompatibility.WaitForExitAsync(process, linked.Token).ConfigureAwait(false); }
             catch (OperationCanceledException)
             {
                 var note = "Operation interrupted. Driver changes already made are not rolled back. Inspect devices before retrying.";
-                try { if (!process.HasExited) process.Kill(true); await process.WaitForExitAsync().ConfigureAwait(false); }
+                try { if (!process.HasExited) RuntimeCompatibility.KillProcess(process); await RuntimeCompatibility.WaitForExitAsync(process).ConfigureAwait(false); }
                 catch (Win32Exception) { canDelete = false; note += " Windows prevented stopping the elevated process; it may still be running."; }
                 catch (InvalidOperationException) { }
                 return new(command.Operation, -1, note, cancellationToken.IsCancellationRequested ? FailureKind.Cancelled : FailureKind.TimedOut);
@@ -61,7 +61,7 @@ public sealed class WindowsCommandRunner : ICom0ComCommandRunner
                 var wait = Task.Run(() => CMP_WaitNoPendingInstallEvents(checked((uint)command.WaitSeconds * 1000)));
                 try
                 {
-                    var pending = await wait.WaitAsync(linked.Token).ConfigureAwait(false);
+                    var pending = await RuntimeCompatibility.WaitAsync(wait, linked.Token).ConfigureAwait(false);
                     if (pending != 0) return new(command.Operation, checked((int)pending), output + "\nWindows PnP completion was not confirmed. Inspect devices before retrying.", FailureKind.TimedOut);
                 }
                 catch (OperationCanceledException)
@@ -90,6 +90,7 @@ public sealed class WindowsCommandRunner : ICom0ComCommandRunner
             WorkingDirectory = package.DirectoryPath, UseShellExecute = elevate, CreateNoWindow = !elevate,
             WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardOutput = !elevate, RedirectStandardError = !elevate
         };
+        var nativeArguments = new List<string>();
         if (elevate) start.Verb = "runas";
         if (elevate)
         {
@@ -98,20 +99,20 @@ public sealed class WindowsCommandRunner : ICom0ComCommandRunner
             var length = GetShortPathNameW(log, buffer, buffer.Capacity);
             var nativeLog = length > 0 && length < buffer.Capacity ? buffer.ToString() : log;
             if (nativeLog.Any(char.IsWhiteSpace)) throw new ArgumentException("setupc cannot accept a log path containing spaces and no usable short filename exists. Use ElevationHelperPath, which captures stdout inside the elevated helper.");
-            start.ArgumentList.Add("--output"); start.ArgumentList.Add(nativeLog);
+            nativeArguments.Add("--output"); nativeArguments.Add(nativeLog);
         }
-        foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        if (start.ArgumentList.Count > 8) throw new ArgumentException("The setupc command line exceeds its upstream eight-argument parser.");
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        if (start.ArgumentList.Sum(a => Encoding.GetEncoding((int)GetACP()).GetByteCount(a) + 1) >= 1024) throw new ArgumentException("The setupc command line exceeds its upstream 1024-byte buffer. Use a shorter path.");
+        nativeArguments.AddRange(arguments);
+        if (nativeArguments.Count > 8) throw new ArgumentException("The setupc command line exceeds its upstream eight-argument parser.");
+        var encoding = RuntimeCompatibility.AnsiEncoding((int)GetACP());
+        if (nativeArguments.Sum(a => encoding.GetByteCount(a) + 1) >= 1024) throw new ArgumentException("The setupc command line exceeds its upstream 1024-byte buffer. Use a shorter path.");
+        RuntimeCompatibility.SetArguments(start, nativeArguments);
         return start;
     }
 
     private static string ReadLog(string path)
     {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         // Native setup.dll writes ANSI, not UTF-8.
-        return File.ReadAllText(path, Encoding.GetEncoding((int)GetACP()));
+        return File.ReadAllText(path, RuntimeCompatibility.AnsiEncoding((int)GetACP()));
     }
     [DllImport("kernel32.dll")] private static extern uint GetACP();
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern uint GetShortPathNameW(string path, StringBuilder buffer, int size);

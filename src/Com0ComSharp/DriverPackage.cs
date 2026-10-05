@@ -45,7 +45,8 @@ public sealed class DriverPackage
     internal IReadOnlyDictionary<string, string> Fingerprint() => RequiredFiles.ToDictionary(file => file, file =>
     {
         using var stream = File.OpenRead(Path.Combine(DirectoryPath, file));
-        return Convert.ToHexString(SHA256.HashData(stream));
+        using var hash = SHA256.Create();
+        return RuntimeCompatibility.ToHexString(hash.ComputeHash(stream));
     }, StringComparer.OrdinalIgnoreCase);
 
     internal static ushort ReadMachine(string path)

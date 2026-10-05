@@ -17,7 +17,7 @@ public static class SignatureInspector
 
     public static SignatureReport Inspect(string path)
     {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Driver signature inspection requires Windows.");
+        WindowsDiagnostics.EnsureWindows();
         path = Path.GetFullPath(path);
         var info = new TrustFile { Size = (uint)Marshal.SizeOf<TrustFile>(), Path = path };
         var result = Verify(info, 1);
@@ -37,7 +37,7 @@ public static class SignatureInspector
     /// <summary>Checks both catalog trust and membership; checking the catalog signature alone is insufficient.</summary>
     public static int VerifyCatalogMember(string catalogPath, string memberPath)
     {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        WindowsDiagnostics.EnsureWindows();
         using var file = File.OpenRead(memberPath);
         var finalResult = unchecked((int)0x800B0100);
         foreach (var algorithm in new[] { "SHA256", "SHA1" })
@@ -55,7 +55,7 @@ public static class SignatureInspector
                     var info = new TrustCatalog
                     {
                         Size = (uint)Marshal.SizeOf<TrustCatalog>(), CatalogPath = Path.GetFullPath(catalogPath),
-                        MemberTag = Convert.ToHexString(hash), MemberPath = Path.GetFullPath(memberPath),
+                        MemberTag = RuntimeCompatibility.ToHexString(hash), MemberPath = Path.GetFullPath(memberPath),
                         MemberFile = file.SafeFileHandle.DangerousGetHandle(), Hash = pin.AddrOfPinnedObject(), HashSize = size, Admin = admin
                     };
                     finalResult = Verify(info, 2);
