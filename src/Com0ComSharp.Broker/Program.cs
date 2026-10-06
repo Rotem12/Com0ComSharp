@@ -15,7 +15,7 @@ if (args.Length == 2 && args[0] == "--service")
 Console.Error.WriteLine("This executable is installed and run by Windows Service Control Manager.");
 return;
 
-internal sealed record ManagementBrokerRequest(Dictionary<string, string> PackageHashes, Com0ComCommand? Command, bool StopAll, bool AllowLegacy);
+internal sealed record ManagementBrokerRequest(Dictionary<string, string> PackageHashes, Com0ComCommand? Command, bool StopAll, bool AllowLegacy, bool Ping = false);
 
 internal static class BrokerService
 {
@@ -100,6 +100,8 @@ internal static class BrokerService
         var actual = package.Fingerprint();
         if (request.PackageHashes.Count != actual.Count || actual.Any(x => !request.PackageHashes.TryGetValue(x.Key, out var hash) || !string.Equals(hash, x.Value, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidDataException("The caller's driver package does not match the service's protected package.");
+        if (request.Ping)
+            return new(Com0ComOperation.Help, 0, "The Com0ComSharp management service is available.", FailureKind.None);
         var client = new Com0ComClient(package, new ClientOptions(elevation: ElevationMode.RequireAdministrator, allowLegacyDriver: request.AllowLegacy));
         if (request.StopAll)
         {

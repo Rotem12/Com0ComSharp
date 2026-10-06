@@ -2,12 +2,10 @@
 
 ## Recommended flow
 
-1. Discover the installed package and inspect present devices without UAC. Reuse already provisioned ports when healthy.
-2. Before first provisioning, explain that administrator approval is required. Inspect the package; the supplied legacy version also needs an explicit compatibility acknowledgement.
-3. Deploy reviewed native files and the helper in an administrator-protected application directory. For managed PCs, have IT provision a validated driver and app-owned pairs through the normal elevated installer/device-management system.
-4. Run `Install-ManagementBroker.ps1` once from elevated setup. It stages the driver and installs the protected LocalSystem broker. Deploy the helper and broker from the same release. For Framework consumers, use the complete helper archive; the management broker is the self-contained modern Windows x64 executable.
-5. Check reboot requirements, device problem codes, and `Healthy` status. Perform an application-level serial handshake before enabling dependent features.
-6. Store the pair index/names your app owns. Remove only those pairs during app uninstall; do not globally uninstall a shared driver automatically.
+1. Deploy the native driver package and matching `Com0ComSharp.Tool.exe` and `Com0ComSharp.Broker.exe` beside the application.
+2. Call `api.InstallDriver()`. It detects the driver and service, requests elevation if setup is needed, and installs both components. Check `RebootRequired` before creating ports.
+3. Create and verify ports, then perform an application-level serial handshake.
+4. Store the pair IDs/names your app owns. Remove those pairs during app uninstall; `Stop()` is machine-wide and clears all com0com pairs.
 
 Driver staging and removal require administrator rights. Direct use of `setupc.exe` also requires elevation for device changes. Install the Com0ComSharp management broker once as LocalSystem during elevated setup; ordinary-user API calls can then create/remove pairs through its restricted named-pipe protocol. Serial I/O itself generally needs no admin rights; device permissions, open handles, and enterprise policy can still restrict access.
 
@@ -29,7 +27,7 @@ Driver staging and removal require administrator rights. Direct use of `setupc.e
 
 `CommandResult.Success` describes the native command, not device readiness. Staging does not start a device. A pair needs both specific endpoints healthy. `CreateNamedPair` additionally verifies names and both endpoint states. The CLI returns exit 2 when creation succeeded but readiness cannot be established.
 
-The [simple API](vspe-migration.md) uses a one-time elevated setup to stage the driver and install the broker. Afterward, `CreateDevice`, `DestroyDevice`, and `Stop` do not request elevation. `Stop()` destroys every machine-wide pair and leaves the driver installed; `UninstallDriver()` removes the driver and requires elevation. Use the helper and broker from the same release as the library.
+The [simple API](vspe-migration.md) installs the driver and broker through `InstallDriver()`. Afterward, `CreateDevice`, `DestroyDevice`, and `Stop` do not request elevation. `Stop()` destroys every machine-wide pair and leaves the driver and broker installed; `UninstallDriver()` removes all three components with elevation. Use the helper and broker from the same release as the library.
 
 The UAC refusal, alternate-credentials, broker service install, and pipe transport paths need validation under actual deployment policies. API support does not prove a domain permits elevation. WDAC/AppLocker may reject the helper or unsigned setup utility before the kernel checks the driver.
 

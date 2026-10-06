@@ -11,7 +11,7 @@ public sealed class Com0ComApi
 
     /// <summary>Opens native files and automatically locates a companion helper beside the application, when present.</summary>
     public Com0ComApi(string driverDirectory, ClientOptions? options = null)
-        : this(new Com0ComClient(DriverPackage.Open(driverDirectory), DiscoverHelper(options))) { }
+        : this(new Com0ComClient(DriverPackage.Open(driverDirectory), DiscoverCompanions(options))) { }
 
     public Com0ComApi(Com0ComClient client) : this(client, WindowsDiagnostics.GetPairs) { }
 
@@ -21,9 +21,28 @@ public sealed class Com0ComApi
         this.getPairs = getPairs;
     }
 
+    /// <summary>Checks for both driver and broker, requests elevation once when needed, and installs both components.</summary>
     public CommandResult InstallDriver() => InstallDriverAsync().GetAwaiter().GetResult();
     public async Task<CommandResult> InstallDriverAsync(CancellationToken cancellationToken = default)
-        => Check(await Client.InstallDriverAsync(cancellationToken).ConfigureAwait(false));
+    {
+        var broker = Client.Options.ManagementBrokerPath;
+        if (string.IsNullOrWhiteSpace(broker) || !File.Exists(broker))
+            throw new FileNotFoundException("Deploy the matching Com0ComSharp.Broker.exe beside the application. InstallDriver installs it as a service together with the driver.", broker);
+        broker = Path.GetFullPath(broker);
+        var packageInstalled = WindowsDiagnostics.FindInstalledPackage() is not null;
+        if (packageInstalled && await ManagementBrokerClient.IsAvailableAsync(Client.Package, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false))
+            return new(Com0ComOperation.InstallDriver, 0, "The com0com driver and Com0ComSharp management service are already installed.", FailureKind.None);
+
+        var elevatedHelperWillInstallService = Client.Options.Elevation == ElevationMode.Prompt && Client.Options.ElevationHelperPath is not null;
+        if (!elevatedHelperWillInstallService && !WindowsDiagnostics.IsAdministrator() && Client.Options.Elevation == ElevationMode.Prompt)
+            throw new Com0ComException(new(Com0ComOperation.InstallDriver, 740,
+                "Deploy the matching Com0ComSharp.Tool.exe so Windows can prompt once to install the driver and management service.", FailureKind.ElevationRequired));
+
+        var result = Check(await Client.InstallDriverAsync(cancellationToken).ConfigureAwait(false));
+        if (!elevatedHelperWillInstallService && !await ManagementBrokerClient.IsAvailableAsync(Client.Package, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false))
+            ManagementBrokerInstaller.Install(Client.Package, broker, ManagementBrokerInstaller.HashFile(broker));
+        return result;
+    }
 
     /// <summary>Creates active standard COM ports and returns their stable com0com pair ID. Requires free/unreserved names.</summary>
     public int CreatePair(string portA, string portB, bool emulateBaudRate = false)
@@ -98,10 +117,24 @@ public sealed class Com0ComApi
     public CommandResult DestroyPair(int pairIndex) => DestroyDevice(pairIndex);
     public Task<CommandResult> DestroyPairAsync(int pairIndex, CancellationToken cancellationToken = default) => DestroyDeviceAsync(pairIndex, cancellationToken);
 
-    /// <summary>Removes the shared driver and every com0com pair on this PC. Requires administrator approval.</summary>
+    /// <summary>Removes every pair, then removes the shared driver and management service with one administrator approval.</summary>
     public CommandResult UninstallDriver() => UninstallDriverAsync().GetAwaiter().GetResult();
     public async Task<CommandResult> UninstallDriverAsync(CancellationToken cancellationToken = default)
-        => Check(await Client.UninstallDriverAsync(cancellationToken).ConfigureAwait(false));
+    {
+        var elevatedHelperWillRemoveService = Client.Options.Elevation == ElevationMode.Prompt && Client.Options.ElevationHelperPath is not null;
+        if (!elevatedHelperWillRemoveService && !WindowsDiagnostics.IsAdministrator() && Client.Options.Elevation == ElevationMode.Prompt)
+            throw new Com0ComException(new(Com0ComOperation.UninstallDriver, 740,
+                "Deploy the matching Com0ComSharp.Tool.exe so Windows can prompt once to remove the driver and management service.", FailureKind.ElevationRequired));
+        if (!elevatedHelperWillRemoveService && WindowsDiagnostics.IsAdministrator()) ManagementBrokerInstaller.StopForDriverRemoval();
+        var result = await Client.UninstallDriverAsync(cancellationToken).ConfigureAwait(false);
+        if (!result.Success)
+        {
+            if (!elevatedHelperWillRemoveService && WindowsDiagnostics.IsAdministrator()) ManagementBrokerInstaller.RestoreAfterFailedDriverRemoval();
+            return Check(result);
+        }
+        if (!elevatedHelperWillRemoveService && WindowsDiagnostics.IsAdministrator()) ManagementBrokerInstaller.Uninstall();
+        return Check(result);
+    }
 
     /// <summary>Destroys all com0com pairs on this PC and leaves the shared driver installed.</summary>
     public CommandResult Stop() => StopAsync().GetAwaiter().GetResult();
@@ -159,6 +192,9 @@ public sealed class Com0ComApi
                 ? await Client.ExecuteAsync(create, cancellationToken).ConfigureAwait(false)
                 : await ManagementBrokerClient.ExecuteAsync(Client.Package, create, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
 
+        if (string.IsNullOrWhiteSpace(Client.Options.ManagementBrokerPath) || !File.Exists(Client.Options.ManagementBrokerPath))
+            throw new FileNotFoundException("Deploy Com0ComSharp.Broker.exe. The first InstallDriver call installs both the driver and its management service.", Client.Options.ManagementBrokerPath);
+
         if (Client.Options.Elevation == ElevationMode.Prompt && Client.Options.ElevationHelperPath is null && !WindowsDiagnostics.IsAdministrator())
             throw new Com0ComException(new(create.Operation, 740,
                 "Deploy the matching Com0ComSharp.Tool.exe beside the application for one UAC approval covering driver installation and port creation.",
@@ -176,14 +212,25 @@ public sealed class Com0ComApi
             if (batch.Results.Count == 0) throw new InvalidOperationException("The elevation helper did not complete driver installation.");
             throw new InvalidOperationException("The elevation helper stopped before creating the port. Inspect the driver result before retrying.");
         }
+        if (!(Client.Options.Elevation == ElevationMode.Prompt && Client.Options.ElevationHelperPath is not null)
+            && WindowsDiagnostics.IsAdministrator())
+        {
+            var broker = Client.Options.ManagementBrokerPath!;
+            ManagementBrokerInstaller.Install(Client.Package, broker, ManagementBrokerInstaller.HashFile(broker));
+        }
         return Check(batch.Results[1]);
     }
 
-    private static ClientOptions DiscoverHelper(ClientOptions? options)
+    private static ClientOptions DiscoverCompanions(ClientOptions? options)
     {
         options ??= new ClientOptions();
-        if (options.ElevationHelperPath is not null || options.Elevation != ElevationMode.Prompt) return options;
-        var helper = Path.Combine(AppContext.BaseDirectory, "Com0ComSharp.Tool.exe");
-        return File.Exists(helper) ? options with { ElevationHelperPath = helper } : options;
+        var baseDirectory = AppContext.BaseDirectory;
+        var helper = options.ElevationHelperPath ?? Path.Combine(baseDirectory, "Com0ComSharp.Tool.exe");
+        var broker = options.ManagementBrokerPath ?? Path.Combine(baseDirectory, "Com0ComSharp.Broker.exe");
+        return options with
+        {
+            ElevationHelperPath = options.ElevationHelperPath ?? (File.Exists(helper) ? helper : null),
+            ManagementBrokerPath = options.ManagementBrokerPath ?? (File.Exists(broker) ? broker : null)
+        };
     }
 }

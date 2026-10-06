@@ -45,16 +45,18 @@ public sealed record ClientOptions
 
     /// <summary>Constructor-based options for consumers using C# 7.3.</summary>
     public ClientOptions(ElevationMode elevation = ElevationMode.Prompt, TimeSpan? timeout = null,
-        string? elevationHelperPath = null, bool allowLegacyDriver = false)
+        string? elevationHelperPath = null, bool allowLegacyDriver = false, string? managementBrokerPath = null)
     {
         Elevation = elevation; Timeout = timeout ?? TimeSpan.FromMinutes(3);
-        ElevationHelperPath = elevationHelperPath; AllowLegacyDriver = allowLegacyDriver;
+        ElevationHelperPath = elevationHelperPath; AllowLegacyDriver = allowLegacyDriver; ManagementBrokerPath = managementBrokerPath;
     }
 
     public ElevationMode Elevation { get; init; } = ElevationMode.Prompt;
     public TimeSpan Timeout { get; init; } = TimeSpan.FromMinutes(3);
     /// <summary>Path to the published Com0ComSharp.Tool.exe, enabling one UAC prompt per batch.</summary>
     public string? ElevationHelperPath { get; init; }
+    /// <summary>Path to the matching Com0ComSharp.Broker.exe, installed as a protected Windows service by InstallDriver.</summary>
+    public string? ManagementBrokerPath { get; init; }
     /// <summary>Legacy packages need an explicit opt-in. A valid Authenticode signature does not prove Windows acceptance.</summary>
     public bool AllowLegacyDriver { get; init; }
 }

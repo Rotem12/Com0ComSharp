@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace Com0ComSharp;
 
-internal sealed record ManagementBrokerRequest(Dictionary<string, string> PackageHashes, Com0ComCommand? Command, bool StopAll, bool AllowLegacy);
+internal sealed record ManagementBrokerRequest(Dictionary<string, string> PackageHashes, Com0ComCommand? Command, bool StopAll, bool AllowLegacy, bool Ping = false);
 
 /// <summary>Client for the separately installed, machine-wide privileged management service.</summary>
 internal static class ManagementBrokerClient
@@ -18,28 +18,34 @@ internal static class ManagementBrokerClient
     internal static Task<CommandResult> StopAllAsync(DriverPackage package, bool allowLegacy, CancellationToken cancellationToken)
         => SendAsync(package, null, true, allowLegacy, cancellationToken);
 
-    private static async Task<CommandResult> SendAsync(DriverPackage package, Com0ComCommand? command, bool stopAll, bool allowLegacy, CancellationToken cancellationToken)
+    internal static async Task<bool> IsAvailableAsync(DriverPackage package, bool allowLegacy, CancellationToken cancellationToken)
     {
-        var request = new ManagementBrokerRequest(package.Fingerprint().ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase), command, stopAll, allowLegacy);
+        var result = await SendAsync(package, null, false, allowLegacy, cancellationToken, ping: true).ConfigureAwait(false);
+        return result.Success;
+    }
+
+    private static async Task<CommandResult> SendAsync(DriverPackage package, Com0ComCommand? command, bool stopAll, bool allowLegacy, CancellationToken cancellationToken, bool ping = false)
+    {
+        var request = new ManagementBrokerRequest(package.Fingerprint().ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase), command, stopAll, allowLegacy, ping);
         try
         {
             using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
             await pipe.ConnectAsync(3000, cancellationToken).ConfigureAwait(false);
             if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle.DangerousGetHandle(), out var serverPid)
                 || !IsInstalledBroker(serverPid))
-                return new(command?.Operation ?? Com0ComOperation.RemovePair, -1, "Rejected a connection that did not come from the installed Com0ComSharp broker service.", FailureKind.HelperFailed);
+                return new(command?.Operation ?? Com0ComOperation.Help, -1, "Rejected a connection that did not come from the installed Com0ComSharp broker service.", FailureKind.HelperFailed);
             using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true);
             using var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, true);
             await writer.WriteLineAsync(JsonSerializer.Serialize(request)).ConfigureAwait(false);
             await writer.FlushAsync().ConfigureAwait(false);
             var response = await reader.ReadLineAsync().ConfigureAwait(false);
             return response is null
-                ? new(command?.Operation ?? Com0ComOperation.RemovePair, -1, "The management service closed the connection without a result.", FailureKind.HelperFailed)
+                ? new(command?.Operation ?? Com0ComOperation.Help, -1, "The management service closed the connection without a result.", FailureKind.HelperFailed)
                 : JsonSerializer.Deserialize<CommandResult>(response) ?? throw new InvalidDataException("The management service returned an empty response.");
         }
         catch (Exception e) when (e is IOException or TimeoutException or JsonException or UnauthorizedAccessException)
         {
-            return new(command?.Operation ?? Com0ComOperation.RemovePair, -1,
+            return new(command?.Operation ?? Com0ComOperation.Help, -1,
                 "The non-elevated management service is not available. Install and start Com0ComSharp.Broker once from an elevated setup. " + e.Message,
                 FailureKind.ElevationRequired);
         }

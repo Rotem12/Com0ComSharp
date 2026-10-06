@@ -39,45 +39,27 @@ For a UI application, use `await api.CreatePairAsync("COM21", "COM22")` and `awa
 - Ports remain installed after your process exits. There is no activation key, release step, or global emulation loop. Explicitly destroy app-owned pairs when appropriate. `StartEmulation` and `StopEmulation` are not emulated; `Stop()` removes all pairs through the installed broker. Advanced native global enable/disable commands are available through `Client` and affect all com0com ports.
 - Simple creation accepts free/unreserved standard Windows names from `COM1` through `COM4096`. It uses the actual native allocated pair ID, converts each endpoint to the standard Ports class, verifies the requested names and checks that both Windows devices are healthy. Another application's COM reservations are never released. Perform your application's serial handshake after creation.
 
-## Elevation and configuration
+## Installation and elevation
 
-For a standard user, deploy the complete native driver package and the **matching release's** helper and broker beside the app. Run the one-time setup script elevated; it installs the driver and broker service:
+Place the complete native driver package and the matching release's `Com0ComSharp.Tool.exe` and `Com0ComSharp.Broker.exe` beside your app. The API detects missing components, requests Windows elevation once, then installs the driver and broker service together:
 
 ```csharp
-var helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Com0ComSharp.Tool.exe");
-var broker = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Com0ComSharp.Broker.exe");
-var script = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Install-ManagementBroker.ps1");
-var setup = new System.Diagnostics.ProcessStartInfo("powershell.exe")
-{
-    UseShellExecute = true,
-    Verb = "runas",
-    Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" -DriverPackageDirectory \"" + nativeDriverDirectory + "\" -ToolPath \"" + helper + "\" -BrokerPath \"" + broker + "\""
-};
-using (var process = System.Diagnostics.Process.Start(setup))
-{
-    if (process == null) throw new InvalidOperationException("Windows did not start setup.");
-    process.WaitForExit();
-    if (process.ExitCode != 0) throw new InvalidOperationException("Driver/broker setup failed or was cancelled.");
-} // Call from an explicit first-run setup action.
+var api = new Com0ComApi(nativeDriverDirectory,
+    new ClientOptions(allowLegacyDriver: true));
 
-var api = new Com0ComApi(nativeDriverDirectory, new ClientOptions(
-    elevation: ElevationMode.Prompt,
-    elevationHelperPath: helper,
-    allowLegacyDriver: true));
+var setup = api.InstallDriver();
+if (setup.RebootRequired) Console.WriteLine("Restart Windows before creating ports.");
 
-int id = await api.CreateDeviceAsync("21", emulateBaudRate: true);
-// Set the actual serial speed, for example SerialPort("COM21", 9600), when opening the port.
-await api.StopAsync();
+int id = api.CreateDevice("21", emulateBaudRate: true);
+api.DestroyDevice(id);
+api.Stop();            // Removes every pair, keeps driver and broker.
+api.UninstallDriver(); // Removes pairs, driver, and broker with elevation.
 ```
 
-Run `Install-ManagementBroker.ps1 -DriverPackageDirectory <path> -ToolPath <path> -BrokerPath <path>` once from an elevated setup. It stages the driver, copies the broker and driver files under Program Files, and starts a LocalSystem service. This one-time step is required because Windows does not allow an ordinary user process to create or remove these PnP devices through com0com's `setupc.exe`. Afterward the API sends allowlisted pair create/remove requests to the service without UAC. A missing service causes a clear `ElevationRequired` error; normal create/destroy calls never silently fall back to UAC. `Stop()` removes all pairs through the service but leaves the driver installed. `UninstallDriver()` remains an elevated, separate operation. The pipe accepts pair-management commands from local Users, so `Stop()` intentionally has machine-wide effect.
+`InstallDriver()` checks for both the registered driver and a responding broker service. It is idempotent when both are ready. The helper provides the UAC prompt; Windows may ask for consent or administrator credentials according to local policy. Once installed, the LocalSystem broker accepts allowlisted pair create/remove commands from local users, so normal device changes and `Stop()` need no elevation. `Stop()` has machine-wide effect. The library never restarts Windows.
 
-Windows asks for consent or administrator credentials according to local policy during setup. An app cannot bypass that prompt; domain policy or driver-blocking security settings may still prevent installation. The Framework helper requires every file from its ZIP; the modern x64 helper and broker are self-contained.
-
-`Stop()` and `StopAsync()` remove every com0com pair on this PC, including pairs created by other apps; the driver stays installed. Use `DestroyDevice(id)` for one pair. With the broker service installed, both operations work without elevation. The service grants this machine-wide pair-management access to every local user. Use `Uninstall-ManagementBroker.ps1` for elevated removal of both the service and driver.
-
-`InstallDriver` and other successful native changes can return `RebootRequired=true`; check before continuing. Automatic staging stops with a restart instruction if Windows needs a restart before port configuration. The library never restarts Windows. It preserves legacy signature opt-in and Windows driver policy checks.
+For managed deployments that provision software outside the application, the PowerShell setup and uninstall scripts remain available. The .NET Framework helper archive must be deployed with all its files; the modern x64 helper and broker are self-contained.
 
 For uncommon options use `api.ChangePort("CNCA0", new PortSettings(emulateOverrun: true))`, or the detailed `api.Client` API. Specify the endpoint ID from `GetDeviceInfo(id).A.Id` / `.B.Id`. The earlier typed API remains available.
 
-The earlier Pair facade and lower-level operations are covered by the 0.3 build/test evidence. The 0.5 broker service, standard-user pipe operations, Connector creation through the service, and all-pairs Stop have not been tested live.
+The broker service installation, standard-user pipe operations, and live device changes have not been exercised on this PC; use a controlled Windows test machine before production deployment.

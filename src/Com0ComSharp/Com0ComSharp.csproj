@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFrameworks>net462;net48;net8.0-windows;net10.0-windows</TargetFrameworks>
-    <Version>0.5.0</Version>
+    <Version>0.6.0-preview.1</Version>
     <Description>Windows com0com driver and virtual serial port management with UAC elevation and diagnostics.</Description>
     <Authors>Rotem12</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

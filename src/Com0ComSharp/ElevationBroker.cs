@@ -10,17 +10,19 @@ using System.Text.RegularExpressions;
 
 namespace Com0ComSharp;
 
-/// <summary>Protocol used by the companion tool. No persistent privileged service is installed.</summary>
+/// <summary>Protocol used by the companion tool to execute validated operations after Windows elevation.</summary>
 public static class ElevationBroker
 {
-    private sealed record Request(string Directory, Dictionary<string, string> Hashes, Com0ComCommand[] Commands, bool AllowLegacy, int TimeoutMilliseconds);
+    private sealed record Request(string Directory, Dictionary<string, string> Hashes, Com0ComCommand[] Commands, bool AllowLegacy, int TimeoutMilliseconds, string? ManagementBrokerPath, string? ManagementBrokerHash);
 
     internal static async Task<BatchResult> RunAsync(DriverPackage package, Com0ComCommand[] commands, ClientOptions options, CancellationToken cancellationToken)
     {
         var helper = Path.GetFullPath(options.ElevationHelperPath!);
         if (!File.Exists(helper)) throw new FileNotFoundException("Publish Com0ComSharp.Tool and set ElevationHelperPath to its .exe.", helper);
         var hashes = package.Fingerprint().ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);
-        var request = new Request(package.DirectoryPath, hashes, commands, options.AllowLegacyDriver, checked((int)options.Timeout.TotalMilliseconds));
+        var brokerPath = options.ManagementBrokerPath is null ? null : Path.GetFullPath(options.ManagementBrokerPath);
+        var brokerHash = brokerPath is not null && File.Exists(brokerPath) ? ManagementBrokerInstaller.HashFile(brokerPath) : null;
+        var request = new Request(package.DirectoryPath, hashes, commands, options.AllowLegacyDriver, checked((int)options.Timeout.TotalMilliseconds), brokerPath, brokerHash);
         var payload = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(request));
         if (payload.Length > 24000) throw new ArgumentException("This plan exceeds the Windows command-line limit; use a smaller batch.");
         var name = "Com0ComSharp-" + Guid.NewGuid().ToString("N");
@@ -84,6 +86,7 @@ public static class ElevationBroker
         using var stopMonitor = new CancellationTokenSource();
         var monitor = MonitorParentAsync(pipe, operationCancellation, stopMonitor.Token);
         BatchResult result;
+        var brokerStopped = false;
         var count = 1;
         try
         {
@@ -95,11 +98,38 @@ public static class ElevationBroker
             var actual = package.Fingerprint();
             if (request.Hashes.Count != actual.Count || actual.Any(x => !request.Hashes.TryGetValue(x.Key, out var expected) || !expected.Equals(x.Value, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidDataException("The native package changed before elevation completed.");
+            if (request.Commands.Any(c => c.Operation == Com0ComOperation.InstallDriver))
+            {
+                if (request.ManagementBrokerPath is null || request.ManagementBrokerHash is null)
+                    throw new InvalidDataException("InstallDriver requires the matching Com0ComSharp.Broker.exe beside the application.");
+                ManagementBrokerInstaller.VerifyBrokerForInstall(request.ManagementBrokerPath, request.ManagementBrokerHash);
+            }
+            if (request.Commands.Any(c => c.Operation == Com0ComOperation.UninstallDriver))
+            {
+                ManagementBrokerInstaller.StopForDriverRemoval();
+                brokerStopped = true;
+            }
             var client = new Com0ComClient(package, new() { Elevation = ElevationMode.RequireAdministrator, AllowLegacyDriver = request.AllowLegacy, Timeout = TimeSpan.FromMilliseconds(request.TimeoutMilliseconds) });
             result = await client.ExecuteBatchAsync(request.Commands, operationCancellation.Token).ConfigureAwait(false);
+            if (result.Results.Any(r => r.Operation == Com0ComOperation.InstallDriver && r.Success))
+                ManagementBrokerInstaller.Install(package, request.ManagementBrokerPath!, request.ManagementBrokerHash!);
+            if (result.Results.Any(r => r.Operation == Com0ComOperation.UninstallDriver && r.Success))
+            {
+                ManagementBrokerInstaller.Uninstall();
+                brokerStopped = false;
+            }
+            else if (brokerStopped)
+            {
+                ManagementBrokerInstaller.RestoreAfterFailedDriverRemoval();
+                brokerStopped = false;
+            }
         }
         catch (Exception e)
         {
+            if (brokerStopped)
+            {
+                try { ManagementBrokerInstaller.RestoreAfterFailedDriverRemoval(); } catch { }
+            }
             result = new([new(Com0ComOperation.Help, -1, e.Message, FailureKind.HelperFailed)], count);
         }
         finally
