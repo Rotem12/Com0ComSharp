@@ -6,6 +6,9 @@ namespace Com0ComSharp;
 public sealed class Com0ComApi
 {
     private readonly Func<IReadOnlyList<VirtualPortPair>> getPairs;
+    private readonly IManagementBroker broker;
+    private readonly Func<CancellationToken, Task<CommandResult>> installComponents;
+    private static readonly SemaphoreSlim SetupGate = new(1, 1);
     /// <summary>The detailed API for advanced settings, batches and diagnostic results.</summary>
     public Com0ComClient Client { get; }
 
@@ -15,35 +18,55 @@ public sealed class Com0ComApi
 
     public Com0ComApi(Com0ComClient client) : this(client, WindowsDiagnostics.GetPairs) { }
 
-    internal Com0ComApi(Com0ComClient client, Func<IReadOnlyList<VirtualPortPair>> getPairs)
+    internal Com0ComApi(Com0ComClient client, Func<IReadOnlyList<VirtualPortPair>> getPairs,
+        IManagementBroker? broker = null, Func<CancellationToken, Task<CommandResult>>? installComponents = null)
     {
         Client = client ?? throw new ArgumentNullException(nameof(client));
         this.getPairs = getPairs;
+        this.broker = broker ?? new ManagementBrokerClient(client.Package, client.Options);
+        this.installComponents = installComponents ?? InstallComponentsAsync;
     }
 
     /// <summary>Checks for both driver and broker, requests elevation once when needed, and installs both components.</summary>
     public CommandResult InstallDriver() => InstallDriverAsync().GetAwaiter().GetResult();
     public async Task<CommandResult> InstallDriverAsync(CancellationToken cancellationToken = default)
     {
-        var broker = Client.Options.ManagementBrokerPath;
-        if (string.IsNullOrWhiteSpace(broker) || !File.Exists(broker))
-            throw new FileNotFoundException("Deploy the matching Com0ComSharp.Broker.exe beside the application. InstallDriver installs it as a service together with the driver.", broker);
-        broker = Path.GetFullPath(broker);
-        // The legacy package installer often stages the package in DriverStore
-        // without keeping its source under the old SOFTWARE\com0com path. The
-        // broker ping also checks that the protected package matches this app.
-        if (await ManagementBrokerClient.IsAvailableAsync(Client.Package, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false))
-            return new(Com0ComOperation.InstallDriver, 0, "The com0com driver and Com0ComSharp management service are already installed.", FailureKind.None);
+        await SetupGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var readiness = await broker.ProbeAsync(cancellationToken).ConfigureAwait(false);
+            if (readiness.Success) return readiness with { Operation = Com0ComOperation.InstallDriver };
+            // Only confirmed absence or a protocol update permits setup. A busy,
+            // stopped or unauthenticated service must never cause another UAC.
+            if (readiness.Failure != FailureKind.NotInstalled) return Check(readiness);
+            var result = Check(await installComponents(cancellationToken).ConfigureAwait(false));
+            if (result.RebootRequired) return result;
+            readiness = await broker.ProbeAsync(cancellationToken).ConfigureAwait(false);
+            if (!readiness.Success)
+                return Check(readiness with { Operation = Com0ComOperation.InstallDriver, Output = result.Output + Environment.NewLine + "Setup completed, but readiness verification failed: " + readiness.Output });
+            return result;
+        }
+        finally { SetupGate.Release(); }
+    }
 
-        var elevatedHelperWillInstallService = Client.Options.Elevation == ElevationMode.Prompt && Client.Options.ElevationHelperPath is not null;
-        if (!elevatedHelperWillInstallService && !WindowsDiagnostics.IsAdministrator() && Client.Options.Elevation == ElevationMode.Prompt)
-            throw new Com0ComException(new(Com0ComOperation.InstallDriver, 740,
-                "Deploy the matching Com0ComSharp.Tool.exe so Windows can prompt once to install the driver and management service.", FailureKind.ElevationRequired));
-
-        var result = Check(await Client.InstallDriverAsync(cancellationToken).ConfigureAwait(false));
-        if (!elevatedHelperWillInstallService && !await ManagementBrokerClient.IsAvailableAsync(Client.Package, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false))
-            ManagementBrokerInstaller.Install(Client.Package, broker, ManagementBrokerInstaller.HashFile(broker));
-        return result;
+    private async Task<CommandResult> InstallComponentsAsync(CancellationToken cancellationToken)
+    {
+        var brokerPath = Client.Options.ManagementBrokerPath;
+        if (string.IsNullOrWhiteSpace(brokerPath) || !File.Exists(brokerPath))
+            throw new FileNotFoundException("Deploy the matching Com0ComSharp.Broker.exe beside the application for first-time setup.", brokerPath);
+        brokerPath = Path.GetFullPath(brokerPath!);
+        if (WindowsDiagnostics.IsAdministrator())
+        {
+            var hashes = Client.Package.Fingerprint();
+            var brokerHash = ManagementBrokerInstaller.HashFile(brokerPath);
+            var elevated = new Com0ComClient(Client.Package, Client.Options with { Elevation = ElevationMode.RequireAdministrator, ElevationHelperPath = null });
+            var result = Check(await elevated.InstallDriverAsync(cancellationToken).ConfigureAwait(false));
+            ManagementBrokerInstaller.Install(Client.Package, brokerPath, brokerHash, hashes);
+            return result;
+        }
+        if (Client.Options.Elevation == ElevationMode.Prompt && Client.Options.ElevationHelperPath is not null)
+            return await Client.InstallDriverAsync(cancellationToken).ConfigureAwait(false);
+        return new(Com0ComOperation.InstallDriver, 740, "Deploy Com0ComSharp.Tool.exe and enable elevation prompts so Windows can request administrator approval for first-time setup.", FailureKind.ElevationRequired);
     }
 
     /// <summary>Creates active standard COM ports and returns their stable com0com pair ID. Requires free/unreserved names.</summary>
@@ -80,7 +103,7 @@ public sealed class Com0ComApi
             var fields = initString?.Split(';') ?? throw new ArgumentNullException(nameof(initString));
             if (fields.Length != 2 || fields[1] is not ("0" or "1"))
                 throw new ArgumentException("Use Connector initialization \"21;1\": one COM number and baud-rate emulation 0 or 1.", nameof(initString));
-            return CreateDevice("COM" + fields[0], fields[1] == "1");
+            return CreateDevice(fields[0], fields[1] == "1");
         }
         var command = ParseVspePair(name, initString);
         return CreatePair(command.PortA!.PortName!, command.PortB!.PortName!, command.PortA.EmulateBaudRate == true);
@@ -93,7 +116,7 @@ public sealed class Com0ComApi
             var fields = initString?.Split(';') ?? throw new ArgumentNullException(nameof(initString));
             if (fields.Length != 2 || fields[1] is not ("0" or "1"))
                 throw new ArgumentException("Use Connector initialization \"21;1\": one COM number and baud-rate emulation 0 or 1.", nameof(initString));
-            return CreateDeviceAsync("COM" + fields[0], fields[1] == "1", cancellationToken);
+            return CreateDeviceAsync(fields[0], fields[1] == "1", cancellationToken);
         }
         var command = ParseVspePair(name, initString);
         return CreatePairAsync(command.PortA!.PortName!, command.PortB!.PortName!, command.PortA.EmulateBaudRate == true, cancellationToken);
@@ -103,21 +126,21 @@ public sealed class Com0ComApi
     internal static Com0ComCommand ParseVspePair(string name, string initString)
     {
         if (!string.Equals(name, "Pair", StringComparison.OrdinalIgnoreCase))
-            throw new NotSupportedException("com0com supports Pair devices. VSPE Connector, Splitter and network devices have different behavior and are not supported.");
+            throw new NotSupportedException("Use Pair or Connector. VSPE Splitter and network devices are unsupported.");
         if (initString is null) throw new ArgumentNullException(nameof(initString));
         var fields = initString.Split(';');
         if (fields.Length != 3 || fields[2] is not ("0" or "1"))
             throw new ArgumentException("Use Pair initialization \"21;22;0\": two COM numbers and baud-rate emulation 0 or 1. Extended VSPE settings are unsupported.", nameof(initString));
-        return Com0ComCommand.CreateNamedPair("COM" + fields[0], "COM" + fields[1], fields[2] == "1");
+        return Com0ComCommand.CreateNamedPair(fields[0], fields[1], fields[2] == "1");
     }
 
     public CommandResult DestroyDevice(int deviceIndex) => DestroyDeviceAsync(deviceIndex).GetAwaiter().GetResult();
     public async Task<CommandResult> DestroyDeviceAsync(int deviceIndex, CancellationToken cancellationToken = default)
     {
+        var command = Com0ComCommand.RemovePair(deviceIndex);
+        _ = command.ToArguments();
         await EnsureDriverInstalledAsync(cancellationToken).ConfigureAwait(false);
-        return Check(WindowsDiagnostics.IsAdministrator()
-            ? await Client.DestroyPairAsync(deviceIndex, cancellationToken).ConfigureAwait(false)
-            : await ManagementBrokerClient.ExecuteAsync(Client.Package, Com0ComCommand.RemovePair(deviceIndex), Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
+        return Check(await broker.ExecuteAsync(command, cancellationToken).ConfigureAwait(false));
     }
     public CommandResult DestroyPair(int pairIndex) => DestroyDevice(pairIndex);
     public Task<CommandResult> DestroyPairAsync(int pairIndex, CancellationToken cancellationToken = default) => DestroyDeviceAsync(pairIndex, cancellationToken);
@@ -146,15 +169,7 @@ public sealed class Com0ComApi
     public async Task<CommandResult> StopAsync(CancellationToken cancellationToken = default)
     {
         await EnsureDriverInstalledAsync(cancellationToken).ConfigureAwait(false);
-        if (!WindowsDiagnostics.IsAdministrator())
-            return Check(await ManagementBrokerClient.StopAllAsync(Client.Package, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
-        foreach (var pair in GetDevices())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var result = await Client.DestroyPairAsync(pair.Index, cancellationToken).ConfigureAwait(false);
-            if (!result.Success) return Check(result);
-        }
-        return new(Com0ComOperation.RemovePair, 0, "All com0com pairs were removed; the driver remains installed.", FailureKind.None);
+        return Check(await broker.StopAllAsync(cancellationToken).ConfigureAwait(false));
     }
 
     /// <summary>Lists all installed com0com pairs. Their IDs can be sparse; enumerate this list rather than 0..count-1.</summary>
@@ -173,24 +188,29 @@ public sealed class Com0ComApi
     public CommandResult ChangePort(string endpointId, PortSettings settings) => ChangePortAsync(endpointId, settings).GetAwaiter().GetResult();
     public async Task<CommandResult> ChangePortAsync(string endpointId, PortSettings settings, CancellationToken cancellationToken = default)
     {
+        var command = Com0ComCommand.ChangePort(endpointId, settings);
+        _ = command.ToArguments();
         await EnsureDriverInstalledAsync(cancellationToken).ConfigureAwait(false);
-        return Check(WindowsDiagnostics.IsAdministrator()
-            ? await Client.ChangePortAsync(endpointId, settings, cancellationToken).ConfigureAwait(false)
-            : await ManagementBrokerClient.ExecuteAsync(Client.Package, Com0ComCommand.ChangePort(endpointId, settings), Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
+        return Check(await broker.ExecuteAsync(command, cancellationToken).ConfigureAwait(false));
     }
 
     public BatchResult SetBaudRateEmulation(int deviceIndex, bool enabled)
         => SetBaudRateEmulationAsync(deviceIndex, enabled).GetAwaiter().GetResult();
     public async Task<BatchResult> SetBaudRateEmulationAsync(int deviceIndex, bool enabled, CancellationToken cancellationToken = default)
     {
-        await EnsureDriverInstalledAsync(cancellationToken).ConfigureAwait(false);
         var pair = GetDeviceInfo(deviceIndex);
         if (pair.A is null || pair.B is null) throw new InvalidOperationException("Both pair endpoints are required.");
         var settings = new PortSettings(emulateBaudRate: enabled);
         var commands = new[] { Com0ComCommand.ChangePort(pair.A.Id, settings), Com0ComCommand.ChangePort(pair.B.Id, settings) };
-        var result = WindowsDiagnostics.IsAdministrator()
-            ? await Client.ExecuteBatchAsync(commands, cancellationToken).ConfigureAwait(false)
-            : await ManagementBrokerClient.ExecuteBatchAsync(Client.Package, commands, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false);
+        await EnsureDriverInstalledAsync(cancellationToken).ConfigureAwait(false);
+        var results = new List<CommandResult>();
+        foreach (var command in commands)
+        {
+            var changed = await broker.ExecuteAsync(command, cancellationToken).ConfigureAwait(false);
+            results.Add(changed);
+            if (!changed.Success || changed.RebootRequired) break;
+        }
+        var result = new BatchResult(results, commands.Length);
         result.ThrowIfFailed();
         return result;
     }
@@ -199,17 +219,16 @@ public sealed class Com0ComApi
 
     private async Task<CommandResult> CreateWithDriverIfNeededAsync(Com0ComCommand create, CancellationToken cancellationToken)
     {
+        _ = create.ToArguments();
         await EnsureDriverInstalledAsync(cancellationToken).ConfigureAwait(false);
-        return Check(WindowsDiagnostics.IsAdministrator()
-            ? await Client.ExecuteAsync(create, cancellationToken).ConfigureAwait(false)
-            : await ManagementBrokerClient.ExecuteAsync(Client.Package, create, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
+        return Check(await broker.ExecuteAsync(create, cancellationToken).ConfigureAwait(false));
     }
 
     private async Task EnsureDriverInstalledAsync(CancellationToken cancellationToken)
     {
         var result = await InstallDriverAsync(cancellationToken).ConfigureAwait(false);
         if (result.RebootRequired)
-            throw new InvalidOperationException("Driver installation requires a Windows restart before this operation can continue. Restart, then retry.");
+            throw new Com0ComException(result with { Failure = FailureKind.RebootRequired, Output = "Restart Windows, then retry this operation. " + result.Output });
     }
 
     private static ClientOptions DiscoverCompanions(ClientOptions? options)

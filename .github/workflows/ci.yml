@@ -15,6 +15,13 @@ jobs:
       - run: dotnet restore Com0ComSharp.sln
       - run: dotnet build Com0ComSharp.sln -c Release --no-restore
       - run: dotnet test tests/Com0ComSharp.Tests -c Release --no-build
+      - name: Verify x86 Framework callers
+        shell: pwsh
+        run: |
+          foreach ($framework in @('net462', 'net48')) {
+            dotnet test tests/Com0ComSharp.Tests -c Release -f $framework --no-build -- RunConfiguration.TargetPlatform=x86
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - run: dotnet pack src/Com0ComSharp -c Release --no-build -o .artifacts/packages
       - name: Verify packaged library in C# 7.3 Framework consumers
         shell: pwsh
@@ -36,11 +43,17 @@ jobs:
           & .artifacts/tool-net48/Com0ComSharp.Tool.exe diagnose
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Compress-Archive -Path .artifacts/tool-net48/* -DestinationPath .artifacts/Com0ComSharp.Tool.net48.zip -Force
+      - name: Bundle matching helpers
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path .artifacts/helpers -Force | Out-Null
+          Copy-Item .artifacts/tool/Com0ComSharp.Tool.exe .artifacts/helpers/
+          Copy-Item .artifacts/broker/Com0ComSharp.Broker.exe .artifacts/helpers/
+          Compress-Archive -Path .artifacts/helpers/* -DestinationPath .artifacts/Com0ComSharp.Helpers.win-x64.zip -Force
       - uses: actions/upload-artifact@v4
         with:
           name: Com0ComSharp
           path: |
             .artifacts/packages/*.nupkg
-            .artifacts/tool/Com0ComSharp.Tool.exe
-            .artifacts/broker/Com0ComSharp.Broker.exe
+            .artifacts/Com0ComSharp.Helpers.win-x64.zip
             .artifacts/Com0ComSharp.Tool.net48.zip

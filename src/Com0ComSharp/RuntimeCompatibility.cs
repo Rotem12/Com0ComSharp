@@ -114,6 +114,19 @@ internal static class RuntimeCompatibility
 #endif
     }
 
+    internal static async Task<string?> ReadBoundedLineAsync(StreamReader reader, int limit, CancellationToken cancellationToken)
+    {
+        var line = new StringBuilder();
+        var one = new char[1];
+        while (await ReadTextAsync(reader, one, cancellationToken).ConfigureAwait(false) != 0)
+        {
+            if (one[0] == '\n') return line.ToString().TrimEnd('\r');
+            if (line.Length >= limit) throw new InvalidDataException("The management message exceeds the size limit.");
+            line.Append(one[0]);
+        }
+        return line.Length == 0 ? null : line.ToString();
+    }
+
 #if NETFRAMEWORK
     internal static bool Contains(this string text, string value, StringComparison comparison) =>
         text.IndexOf(value, comparison) >= 0;

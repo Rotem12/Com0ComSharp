@@ -15,8 +15,6 @@ if (args.Length == 2 && args[0] == "--service")
 Console.Error.WriteLine("This executable is installed and run by Windows Service Control Manager.");
 return;
 
-internal sealed record ManagementBrokerRequest(Dictionary<string, string> PackageHashes, Com0ComCommand? Command, bool StopAll, bool AllowLegacy, bool Ping = false);
-
 internal static class BrokerService
 {
     private const string ServiceName = "Com0ComSharpBroker";
@@ -44,7 +42,6 @@ internal static class BrokerService
         try
         {
             var package = DriverPackage.Open(packagePath);
-            SetStatus(4, 0, 0);
             ServeAsync(package, Stop.Token).GetAwaiter().GetResult();
             SetStatus(1, 0, 0);
         }
@@ -72,13 +69,20 @@ internal static class BrokerService
         while (!stop.IsCancellationRequested)
         {
             using var pipe = CreatePipe();
+            SetStatus(4, 0, 0); // Running means the pipe is listening, not just that the process exists.
             try
             {
                 await pipe.WaitForConnectionAsync(stop).ConfigureAwait(false);
-                var line = await ReadBoundedLineAsync(pipe, stop).ConfigureAwait(false);
+                using var requestDeadline = CancellationTokenSource.CreateLinkedTokenSource(stop);
+                requestDeadline.CancelAfter(TimeSpan.FromSeconds(10));
+                using var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, true);
+                var line = await RuntimeCompatibility.ReadBoundedLineAsync(reader, 65536, requestDeadline.Token).ConfigureAwait(false);
                 var result = line is null
                     ? new CommandResult(Com0ComOperation.RemovePair, -1, "Empty request.", FailureKind.HelperFailed)
-                    : await ProcessAsync(package, line, stop).ConfigureAwait(false);
+                    : await ManagementBrokerProtocol.ProcessAsync(package, line,
+                        (command, allowLegacy, token) => new Com0ComClient(package,
+                            new ClientOptions(elevation: ElevationMode.RequireAdministrator, allowLegacyDriver: allowLegacy)).ExecuteAsync(command, token),
+                        WindowsDiagnostics.GetPairs, () => StagedDriverPackage.IsInstalled(package), stop).ConfigureAwait(false);
                 using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true) { AutoFlush = true };
                 await writer.WriteLineAsync(JsonSerializer.Serialize(result)).ConfigureAwait(false);
             }
@@ -87,38 +91,15 @@ internal static class BrokerService
             {
                 if (pipe.IsConnected)
                 {
-                    using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true) { AutoFlush = true };
-                    await writer.WriteLineAsync(JsonSerializer.Serialize(new CommandResult(Com0ComOperation.RemovePair, -1, e.Message, FailureKind.HelperFailed))).ConfigureAwait(false);
+                    try
+                    {
+                        using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true) { AutoFlush = true };
+                        await writer.WriteLineAsync(JsonSerializer.Serialize(new CommandResult(Com0ComOperation.Help, -1, e.Message, FailureKind.HelperFailed))).ConfigureAwait(false);
+                    }
+                    catch (IOException) { } // A disconnected caller must not terminate the service.
                 }
             }
         }
-    }
-
-    private static async Task<CommandResult> ProcessAsync(DriverPackage package, string json, CancellationToken cancellationToken)
-    {
-        var request = JsonSerializer.Deserialize<ManagementBrokerRequest>(json) ?? throw new InvalidDataException("Empty request.");
-        var actual = package.Fingerprint();
-        if (request.PackageHashes.Count != actual.Count || actual.Any(x => !request.PackageHashes.TryGetValue(x.Key, out var hash) || !string.Equals(hash, x.Value, StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidDataException("The caller's driver package does not match the service's protected package.");
-        if (request.Ping)
-            return WindowsDiagnostics.IsDriverServiceInstalled()
-                ? new(Com0ComOperation.Help, 0, "The com0com driver and management service are available.", FailureKind.None)
-                : new(Com0ComOperation.Help, 2, "The com0com driver service is not registered.", FailureKind.ElevationRequired);
-        var client = new Com0ComClient(package, new ClientOptions(elevation: ElevationMode.RequireAdministrator, allowLegacyDriver: request.AllowLegacy));
-        if (request.StopAll)
-        {
-            foreach (var pair in WindowsDiagnostics.GetPairs())
-            {
-                var removed = await client.DestroyPairAsync(pair.Index, cancellationToken).ConfigureAwait(false);
-                if (!removed.Success) return removed;
-            }
-            return new(Com0ComOperation.RemovePair, 0, "All com0com pairs were removed; the driver remains installed.", FailureKind.None);
-        }
-        var command = request.Command ?? throw new InvalidDataException("A management command is required.");
-        if (command.Operation is not (Com0ComOperation.CreateNamedPair or Com0ComOperation.CreateNamedConnector or Com0ComOperation.RemovePair or Com0ComOperation.ChangePort))
-            throw new InvalidDataException("The management service accepts only pair creation, removal, and port configuration.");
-        _ = command.ToArguments();
-        return await client.ExecuteAsync(command, cancellationToken).ConfigureAwait(false);
     }
 
     private static NamedPipeServerStream CreatePipe()
@@ -130,21 +111,6 @@ internal static class BrokerService
         security.AddAccessRule(new(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         return NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous, 65536, 65536, security);
-    }
-
-    private static async Task<string?> ReadBoundedLineAsync(Stream stream, CancellationToken token)
-    {
-        using var buffer = new MemoryStream();
-        var one = new byte[1];
-        while (buffer.Length <= 65536)
-        {
-            var count = await stream.ReadAsync(one.AsMemory(), token).ConfigureAwait(false);
-            if (count == 0) break;
-            if (one[0] == (byte)'\n') break;
-            if (one[0] != (byte)'\r') buffer.WriteByte(one[0]);
-        }
-        if (buffer.Length > 65536) throw new InvalidDataException("Request exceeds the service limit.");
-        return buffer.Length == 0 ? null : Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] private struct ServiceTableEntry { public string? Name; public ServiceMainCallback? Main; }

@@ -49,6 +49,7 @@ public static class WindowsDiagnostics
         }
         paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "com0com"));
         paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "com0com"));
+        paths.Add(Path.Combine(ManagementBrokerLocation.InstallRoot, "Driver"));
         foreach (var path in paths)
         {
             if (!Directory.Exists(path)) continue;
@@ -57,13 +58,6 @@ public static class WindowsDiagnostics
             catch (PlatformNotSupportedException) { }
         }
         return null;
-    }
-
-    internal static bool IsDriverServiceInstalled()
-    {
-        EnsureWindows();
-        using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\com0com");
-        return key is not null;
     }
 
     public static IReadOnlyList<DeviceStatus> GetDevices()

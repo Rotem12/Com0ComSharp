@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
-    <Version>0.6.0-preview.3</Version>
+    <Version>0.6.0</Version>
     <AssemblyName>Com0ComSharp.Broker</AssemblyName>
     <Description>Privileged local service for non-elevated com0com pair management.</Description>
   </PropertyGroup>

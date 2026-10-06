@@ -2,7 +2,7 @@
 
 Manage com0com virtual serial ports from C# on Windows. Supports .NET Framework 4.6.2–4.8.1 and .NET 8–10.
 
-Download the [NuGet package and matching helpers](https://github.com/Rotem12/Com0ComSharp/releases). Place `Com0ComSharp.Tool.exe` and `Com0ComSharp.Broker.exe` beside your app, and extract the native driver package with [`Get-DriverPackage.ps1`](scripts/Get-DriverPackage.ps1).
+Download the [NuGet package and helpers](https://github.com/Rotem12/Com0ComSharp/releases/latest). Extract `Com0ComSharp.Helpers.win-x64.zip` beside your app. Get the native driver files with [`Get-DriverPackage.ps1`](scripts/Get-DriverPackage.ps1).
 
 ```csharp
 using Com0ComSharp;
@@ -10,12 +10,13 @@ using Com0ComSharp;
 var api = new Com0ComApi(@"C:\MyApp\com0com",
     new ClientOptions(allowLegacyDriver: true));
 
-int id = api.CreateDevice("21", emulateBaudRate: true); // First use installs driver + broker if needed; accepts "21", "COM21", or 21
-api.DestroyDevice(id); // remove this pair
-api.Stop();             // remove every pair; keep driver and broker installed
-api.UninstallDriver();  // requests UAC and removes pairs, driver, and broker
+int id = api.CreateDevice("COM21", emulateBaudRate: true);
+api.DestroyDevice(id);
+api.Stop(); // Removes all com0com pairs on this PC.
 ```
 
-`InstallDriver()` is optional; it checks and installs both components explicitly if you want to handle setup and reboot status before creating ports. The first device-management call does the same check automatically. Keep the matching `Com0ComSharp.Tool.exe` and `Com0ComSharp.Broker.exe` beside the app. Windows controls the elevation prompt and may request administrator credentials. Once installed, normal port operations use the broker without another prompt. `Stop()` removes all com0com pairs on the PC. Driver acceptance depends on Windows security policy. See the [driver compatibility notes](docs/driver-verification.md) and [VSPE migration guide](docs/vspe-migration.md).
+First use installs the driver and automatic-start broker with one Windows administrator prompt. Later create, destroy, configure, and stop calls need no elevation. `InstallDriver()` is optional; its result reports whether a restart is needed. `UninstallDriver()` removes both components with elevation.
 
-The driver is legacy cross-signed and may be blocked by current Windows 11 policy. `allowLegacyDriver: true` acknowledges that limitation; it does not weaken or bypass Windows security settings. See the [Framework guide](docs/framework-compatibility.md) for .NET Framework deployment details.
+Port names accept `"COM21"`, `"21"`, or `21`. Use `CreatePair("COM21", "COM22")` for two connected ports. Set the actual baud rate when opening `SerialPort`.
+
+The legacy signed driver can be blocked by Windows 11 security policy. [Setup](docs/deployment.md) · [VSPE usage](docs/vspe-migration.md) · [.NET Framework](docs/framework-compatibility.md)

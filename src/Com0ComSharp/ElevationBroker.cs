@@ -85,13 +85,15 @@ public static class ElevationBroker
         using var operationCancellation = new CancellationTokenSource();
         using var stopMonitor = new CancellationTokenSource();
         var monitor = MonitorParentAsync(pipe, operationCancellation, stopMonitor.Token);
-        BatchResult result;
+        BatchResult result = new([], 1);
+        var activeOperation = Com0ComOperation.Help;
         var brokerStopped = false;
         var count = 1;
         try
         {
             var request = JsonSerializer.Deserialize<Request>(Convert.FromBase64String(payload)) ?? throw new InvalidDataException("Empty request.");
             count = request.Commands.Length;
+            activeOperation = request.Commands.FirstOrDefault()?.Operation ?? Com0ComOperation.Help;
             if (count is < 1 or > 100 || request.TimeoutMilliseconds is < 1 or > 1800000) throw new InvalidDataException("Invalid request limits.");
             foreach (var command in request.Commands) command.ToArguments();
             var package = DriverPackage.Open(request.Directory);
@@ -112,9 +114,13 @@ public static class ElevationBroker
             var client = new Com0ComClient(package, new() { Elevation = ElevationMode.RequireAdministrator, AllowLegacyDriver = request.AllowLegacy, Timeout = TimeSpan.FromMilliseconds(request.TimeoutMilliseconds) });
             result = await client.ExecuteBatchAsync(request.Commands, operationCancellation.Token).ConfigureAwait(false);
             if (result.Results.Any(r => r.Operation == Com0ComOperation.InstallDriver && r.Success))
-                ManagementBrokerInstaller.Install(package, request.ManagementBrokerPath!, request.ManagementBrokerHash!);
+            {
+                activeOperation = Com0ComOperation.InstallDriver;
+                ManagementBrokerInstaller.Install(package, request.ManagementBrokerPath!, request.ManagementBrokerHash!, request.Hashes);
+            }
             if (result.Results.Any(r => r.Operation == Com0ComOperation.UninstallDriver && r.Success))
             {
+                activeOperation = Com0ComOperation.UninstallDriver;
                 ManagementBrokerInstaller.Uninstall();
                 brokerStopped = false;
             }
@@ -130,7 +136,10 @@ public static class ElevationBroker
             {
                 try { ManagementBrokerInstaller.RestoreAfterFailedDriverRemoval(); } catch { }
             }
-            result = new([new(Com0ComOperation.Help, -1, e.Message, FailureKind.HelperFailed)], count);
+            var completed = result.Results.LastOrDefault(r => r.Operation == activeOperation);
+            var failure = (completed ?? new CommandResult(activeOperation, -1, "", FailureKind.HelperFailed))
+                with { ExitCode = -1, Failure = FailureKind.HelperFailed, Output = (completed?.Output ?? "") + Environment.NewLine + e.Message };
+            result = new([failure], count);
         }
         finally
         {

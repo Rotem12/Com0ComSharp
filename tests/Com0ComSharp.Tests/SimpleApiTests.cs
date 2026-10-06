@@ -181,7 +181,7 @@ public sealed class SimpleApiTests
             var client = new Com0ComClient(DriverPackage.Open(directory), new ClientOptions(ElevationMode.RequireAdministrator), runner);
             var backend = new PairBackend();
             backend.Pairs = SetupOutputParser.ParsePairs("CNCA43 PortName=COM70\nCNCB43 PortName=COM71");
-            var api = new Com0ComApi(client, () => backend.Pairs);
+            var api = new Com0ComApi(client, () => backend.Pairs, runner);
             Assert.Equal(1, api.GetDevicesCount());
             Assert.Equal(43, api.GetDeviceIndexByComPortIndex(70));
             Assert.Equal(-1, api.GetDeviceIndexByComPortIndex(21));
@@ -196,11 +196,19 @@ public sealed class SimpleApiTests
         finally { Directory.Delete(directory, true); }
     }
 
-    private sealed class RecordingRunner : ICom0ComCommandRunner
+    private sealed class RecordingRunner : ICom0ComCommandRunner, IManagementBroker
     {
         public readonly List<Com0ComCommand> Commands = new();
         public FailureKind Failure;
+        public Task<CommandResult> ProbeAsync(CancellationToken cancellationToken)
+            => Task.FromResult(new CommandResult(Com0ComOperation.InstallDriver, 0, "Installed fixture", FailureKind.None));
+        public Task<CommandResult> ExecuteAsync(Com0ComCommand command, CancellationToken cancellationToken)
+            => RecordAsync(command);
+        public Task<CommandResult> StopAllAsync(CancellationToken cancellationToken)
+            => Task.FromResult(new CommandResult(Com0ComOperation.RemovePair, 0, "Stopped fixture", FailureKind.None));
         public Task<CommandResult> RunAsync(DriverPackage package, Com0ComCommand command, ClientOptions options, CancellationToken cancellationToken = default)
+            => RecordAsync(command);
+        private Task<CommandResult> RecordAsync(Com0ComCommand command)
         {
             Commands.Add(command);
             return Task.FromResult(new CommandResult(command.Operation, Failure == FailureKind.None ? 0 : 1223, "fixture", Failure));

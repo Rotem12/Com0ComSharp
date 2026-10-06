@@ -1,123 +1,105 @@
+using System.ComponentModel;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
-using Microsoft.Win32;
 using System.Text;
 using System.Text.Json;
 
 namespace Com0ComSharp;
 
-internal sealed record ManagementBrokerRequest(Dictionary<string, string> PackageHashes, Com0ComCommand? Command, bool StopAll, bool AllowLegacy, bool Ping = false);
-
-/// <summary>Client for the separately installed, machine-wide privileged management service.</summary>
-internal static class ManagementBrokerClient
+internal interface IManagementBroker
 {
-    private const string PipeName = "Com0ComSharp.Management.v1";
+    Task<CommandResult> ProbeAsync(CancellationToken cancellationToken);
+    Task<CommandResult> ExecuteAsync(Com0ComCommand command, CancellationToken cancellationToken);
+    Task<CommandResult> StopAllAsync(CancellationToken cancellationToken);
+}
 
-    internal static Task<CommandResult> ExecuteAsync(DriverPackage package, Com0ComCommand command, bool allowLegacy, CancellationToken cancellationToken)
-        => SendAsync(package, command, false, allowLegacy, cancellationToken);
+/// <summary>Authenticated transport to the installed management service; never requests elevation.</summary>
+internal sealed class ManagementBrokerClient : IManagementBroker
+{
+    internal const string PipeName = "Com0ComSharp.Management.v1";
+    private readonly DriverPackage package;
+    private readonly ClientOptions options;
+    private readonly string pipeName;
+    private readonly Func<WindowsServiceStatus> queryService;
 
-    internal static async Task<BatchResult> ExecuteBatchAsync(DriverPackage package, IReadOnlyList<Com0ComCommand> commands, bool allowLegacy, CancellationToken cancellationToken)
+    internal ManagementBrokerClient(DriverPackage package, ClientOptions options, string pipeName = PipeName, Func<WindowsServiceStatus>? queryService = null)
     {
-        var results = new List<CommandResult>();
-        foreach (var command in commands)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var result = await ExecuteAsync(package, command, allowLegacy, cancellationToken).ConfigureAwait(false);
-            results.Add(result);
-            if (!result.Success) break;
-        }
-        return new(results, commands.Count);
+        this.package = package;
+        this.options = options;
+        this.pipeName = pipeName;
+        this.queryService = queryService ?? (() => WindowsServiceStatus.Query());
     }
 
-    internal static Task<CommandResult> StopAllAsync(DriverPackage package, bool allowLegacy, CancellationToken cancellationToken)
-        => SendAsync(package, null, true, allowLegacy, cancellationToken);
+    public Task<CommandResult> ProbeAsync(CancellationToken cancellationToken)
+        => SendAsync(null, false, true, cancellationToken);
+    public Task<CommandResult> ExecuteAsync(Com0ComCommand command, CancellationToken cancellationToken)
+        => SendAsync(command, false, false, cancellationToken);
+    public Task<CommandResult> StopAllAsync(CancellationToken cancellationToken)
+        => SendAsync(null, true, false, cancellationToken);
 
-    internal static async Task<bool> IsAvailableAsync(DriverPackage package, bool allowLegacy, CancellationToken cancellationToken)
+    private async Task<CommandResult> SendAsync(Com0ComCommand? command, bool stopAll, bool ping, CancellationToken cancellationToken)
     {
-        var result = await SendAsync(package, null, false, allowLegacy, cancellationToken, ping: true).ConfigureAwait(false);
-        return result.Success;
-    }
-
-    private static async Task<CommandResult> SendAsync(DriverPackage package, Com0ComCommand? command, bool stopAll, bool allowLegacy, CancellationToken cancellationToken, bool ping = false)
-    {
-        var request = new ManagementBrokerRequest(package.Fingerprint().ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase), command, stopAll, allowLegacy, ping);
+        cancellationToken.ThrowIfCancellationRequested();
+        var operation = command?.Operation ?? (stopAll ? Com0ComOperation.RemovePair : Com0ComOperation.InstallDriver);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(options.Timeout);
         try
         {
-            using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-            await pipe.ConnectAsync(3000, cancellationToken).ConfigureAwait(false);
-            if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle.DangerousGetHandle(), out var serverPid)
-                || !IsInstalledBroker(serverPid))
-                return new(command?.Operation ?? Com0ComOperation.Help, -1, "Rejected the pipe server because its process does not match the broker executable registered for the Com0ComSharp Windows service.", FailureKind.HelperFailed);
+            var status = queryService();
+            if (!status.Installed) return Failed("The Com0ComSharp management service is not installed.", FailureKind.NotInstalled);
+            // Allow automatic service startup to complete after a reboot.
+            while (status.State == 2)
+            {
+                await Task.Delay(100, deadline.Token).ConfigureAwait(false);
+                status = queryService();
+            }
+            if (!status.Running) return Failed("The installed Com0ComSharp management service is stopped. Start the Windows service and retry.", FailureKind.HelperFailed);
+
+            using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await pipe.ConnectAsync((int)options.Timeout.TotalMilliseconds, deadline.Token).ConfigureAwait(false);
+            if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle.DangerousGetHandle(), out var serverPid))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot identify the management pipe server.");
+            // Re-query after connecting, so a stale PID from a service restart is
+            // never trusted. Only SCM's running, dedicated service process counts.
+            status = queryService();
+            if (!status.Running || (status.ServiceType & 0x10) == 0 || status.ProcessId != serverPid)
+                return Failed("Rejected the pipe server: its PID does not match the running Com0ComSharp Windows service.", FailureKind.HelperFailed);
+
+            var request = new ManagementBrokerRequest(package.Fingerprint().ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase), command, stopAll, options.AllowLegacyDriver, ping);
             using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true);
             using var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, true);
-            await writer.WriteLineAsync(JsonSerializer.Serialize(request)).ConfigureAwait(false);
-            await writer.FlushAsync().ConfigureAwait(false);
-            var response = await reader.ReadLineAsync().ConfigureAwait(false);
-            return response is null
-                ? new(command?.Operation ?? Com0ComOperation.Help, -1, "The management service closed the connection without a result.", FailureKind.HelperFailed)
+            await RuntimeCompatibility.WaitAsync(WriteRequestAsync(writer, request), deadline.Token).ConfigureAwait(false);
+            var response = await RuntimeCompatibility.ReadBoundedLineAsync(reader, 1024 * 1024, deadline.Token).ConfigureAwait(false);
+            var result = response is null
+                ? Failed("The management service closed the connection without a result.", FailureKind.HelperFailed)
                 : JsonSerializer.Deserialize<CommandResult>(response) ?? throw new InvalidDataException("The management service returned an empty response.");
+            if (result.Output is null || !Enum.IsDefined(typeof(FailureKind), result.Failure))
+                return Failed("The management service returned an invalid result.", FailureKind.HelperFailed);
+            if (ping && (result.Success || result.Failure == FailureKind.ElevationRequired)
+                && result.BrokerProtocolVersion != ManagementBrokerProtocol.Version)
+                return Failed("The installed broker needs a one-time update from the matching application helpers.", FailureKind.NotInstalled);
+            if (result.Success && result.Operation != operation)
+                return Failed("The management service returned a result for a different operation.", FailureKind.HelperFailed);
+            return result with { Operation = operation };
         }
-        catch (Exception e) when (e is IOException or TimeoutException or JsonException or UnauthorizedAccessException)
-        {
-            return new(command?.Operation ?? Com0ComOperation.Help, -1,
-                "The non-elevated management service is not available. Deploy the matching helper and broker; the first device-management call installs them through Windows elevation. " + e.Message,
-                FailureKind.ElevationRequired);
-        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        { return Failed("The installed management service did not respond before the timeout.", FailureKind.TimedOut); }
+        catch (TimeoutException e) { return Failed("Cannot connect to the installed management service. " + e.Message, FailureKind.TimedOut); }
+        catch (Win32Exception e) { return Failed(e.Message + " (Windows error " + e.NativeErrorCode + ").", e.NativeErrorCode == 5 ? FailureKind.AccessDenied : FailureKind.HelperFailed); }
+        catch (UnauthorizedAccessException e) { return Failed(e.Message, FailureKind.AccessDenied); }
+        catch (System.Security.SecurityException e) { return Failed(e.Message, FailureKind.AccessDenied); }
+        catch (Exception e) when (e is IOException or JsonException or InvalidDataException)
+        { return Failed("The installed management service failed. " + e.Message, FailureKind.HelperFailed); }
+
+        CommandResult Failed(string message, FailureKind failure) => new(operation, -1, message, failure);
     }
 
-    private static bool IsInstalledBroker(uint processId)
+    private static async Task<bool> WriteRequestAsync(StreamWriter writer, ManagementBrokerRequest request)
     {
-        var serviceImage = GetRegisteredServiceImagePath();
-        if (serviceImage is null) return false;
-        var process = OpenProcess(0x1000, false, processId);
-        if (process == IntPtr.Zero) return false;
-        try
-        {
-            var path = new StringBuilder(32768);
-            var size = path.Capacity;
-            if (!QueryFullProcessImageName(process, 0, path, ref size)) return false;
-            return string.Equals(Path.GetFullPath(path.ToString()), serviceImage, StringComparison.OrdinalIgnoreCase);
-        }
-        finally { CloseHandle(process); }
-    }
-
-    private static string? GetRegisteredServiceImagePath()
-    {
-        try
-        {
-            using var service = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\Com0ComSharpBroker");
-            var commandLine = service?.GetValue("ImagePath") as string;
-            if (commandLine is null || commandLine.Trim().Length == 0) return null;
-            commandLine = Environment.ExpandEnvironmentVariables(commandLine.Trim());
-            var marker = commandLine.IndexOf("Com0ComSharp.Broker.exe", StringComparison.OrdinalIgnoreCase);
-            if (marker < 0) return null;
-            var executable = commandLine.Substring(0, marker + "Com0ComSharp.Broker.exe".Length).Trim().Trim('"');
-            if (executable.StartsWith(@"\??\", StringComparison.Ordinal)) executable = executable.Substring(4);
-            if (!string.Equals(Path.GetFileName(executable), "Com0ComSharp.Broker.exe", StringComparison.OrdinalIgnoreCase)) return null;
-            var fullPath = Path.GetFullPath(executable);
-            var directory = Path.GetDirectoryName(fullPath);
-            if (directory is null || !IsProtectedInstallDirectory(directory)) return null;
-            return fullPath;
-        }
-        catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException or System.Security.SecurityException or NotSupportedException)
-        { return null; }
-    }
-
-    private static bool IsProtectedInstallDirectory(string directory)
-    {
-        var roots = new[]
-        {
-            Environment.GetEnvironmentVariable("ProgramW6432"),
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
-        };
-        return roots.Where(root => !string.IsNullOrWhiteSpace(root))
-            .Select(root => Path.GetFullPath(Path.Combine(root!, "Com0ComSharp")))
-            .Any(root => string.Equals(root, directory, StringComparison.OrdinalIgnoreCase));
+        await writer.WriteLineAsync(JsonSerializer.Serialize(request)).ConfigureAwait(false);
+        await writer.FlushAsync().ConfigureAwait(false);
+        return true;
     }
 
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint processId);
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder imageName, ref int size);
-    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CloseHandle(IntPtr handle);
 }

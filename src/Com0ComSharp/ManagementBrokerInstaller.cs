@@ -15,11 +15,14 @@ internal static class ManagementBrokerInstaller
 
     internal static bool IsAdministrator() => WindowsDiagnostics.IsAdministrator();
 
-    internal static void Install(DriverPackage package, string brokerSource, string expectedBrokerHash)
+    internal static void Install(DriverPackage package, string brokerSource, string expectedBrokerHash, IReadOnlyDictionary<string, string>? expectedPackageHashes = null)
     {
         WindowsDiagnostics.EnsureWindows();
         if (!IsAdministrator()) throw new UnauthorizedAccessException("Administrator approval is required to install the management service.");
         VerifyBrokerForInstall(brokerSource, expectedBrokerHash);
+        expectedPackageHashes ??= package.Fingerprint();
+        if (!SameFingerprint(expectedPackageHashes, package.Fingerprint()))
+            throw new InvalidDataException("The native package changed during setup.");
         StopAndDeleteService();
 
         var root = GetInstallRoot();
@@ -32,7 +35,7 @@ internal static class ManagementBrokerInstaller
         VerifyFileHash(serviceExecutable, expectedBrokerHash);
 
         var protectedPackage = DriverPackage.Open(driverDirectory);
-        if (!SameFingerprint(package.Fingerprint(), protectedPackage.Fingerprint()))
+        if (!SameFingerprint(expectedPackageHashes, protectedPackage.Fingerprint()))
             throw new InvalidDataException("The protected driver package differs from the package used during setup.");
 
         var commandLine = "\"" + serviceExecutable + "\" --service \"" + driverDirectory + "\"";
@@ -103,10 +106,7 @@ internal static class ManagementBrokerInstaller
         => left.Count == right.Count && left.All(x => right.TryGetValue(x.Key, out var hash) && string.Equals(hash, x.Value, StringComparison.OrdinalIgnoreCase));
 
     private static string GetInstallRoot()
-    {
-        var programFiles = Environment.GetEnvironmentVariable("ProgramW6432") ?? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        return Path.Combine(programFiles, "Com0ComSharp");
-    }
+        => ManagementBrokerLocation.InstallRoot;
 
     private static void StopAndDeleteService()
     {

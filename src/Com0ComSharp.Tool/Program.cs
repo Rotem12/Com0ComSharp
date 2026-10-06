@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 using System.Text.Json;
 using Com0ComSharp;
 
@@ -8,19 +9,19 @@ if (args.Length == 0 || args[0] is "--help" or "help")
 {
     Console.WriteLine("""
         Com0ComSharp.Tool
-          diagnose [--package DIRECTORY]         Read-only environment and signing report
-          list                                   Read-only pair discovery
-          download --out INSTALLER.exe            Download pinned installer; no execution
-          install-driver --package DIRECTORY [--allow-legacy]
-          create --package DIRECTORY [--a COM#] [--b COM#] [--index N] [--allow-legacy]
-          provision --package DIRECTORY [--index N] [--a COM#] [--b COM#] [--allow-legacy]
+          diagnose [--package DIRECTORY]
+          list
+          download --out INSTALLER.exe
+          install-driver --package DIRECTORY --allow-legacy
+          create --package DIRECTORY --a COM21 [--b COM22] --allow-legacy
           destroy --package DIRECTORY --index N
           change --package DIRECTORY --port CNCA0 --settings-file SETTINGS.json
-          uninstall-driver --package DIRECTORY --all-pairs
+          stop --package DIRECTORY
+          uninstall-driver --package DIRECTORY
           native-help --package DIRECTORY
-        Add --require-admin to refuse elevation; otherwise Windows UAC is requested when needed.
-        Use the published .exe for a single UAC prompt per batch. Running via dotnet uses per-command elevation.
-        --allow-legacy acknowledges compatibility risk; it does not change Windows security settings.
+        First-time setup requests administrator approval. Normal port operations use the installed broker.
+        stop removes all com0com pairs; uninstall-driver also removes the driver and broker.
+        Add --require-admin to disable elevation prompts.
         """);
     return 0;
 }
@@ -43,55 +44,42 @@ try
     if (args[0] == "diagnose")
     {
         var package = Optional("--package") is string path ? DriverPackage.Open(path) : WindowsDiagnostics.FindInstalledPackage();
-        Console.WriteLine(JsonSerializer.Serialize(new { Environment = WindowsDiagnostics.InspectEnvironment(), Package = package?.DirectoryPath, Signing = package?.Inspect(), ReservedComPorts = WindowsDiagnostics.GetReservedComPortNames() }, json));
+        var version = typeof(Com0ComApi).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        var status = WindowsServiceStatus.Query();
+        var readiness = package is null ? null : await new ManagementBrokerClient(package, new ClientOptions(timeout: TimeSpan.FromSeconds(5))).ProbeAsync(default);
+        Console.WriteLine(JsonSerializer.Serialize(new { LibraryVersion = version, BrokerService = status, Readiness = readiness,
+            Environment = WindowsDiagnostics.InspectEnvironment(), Package = package?.DirectoryPath, Signing = package?.Inspect() }, json));
         return 0;
     }
     if (args[0] == "list") { Console.WriteLine(JsonSerializer.Serialize(WindowsDiagnostics.GetPairs(), json)); return 0; }
-    var native = Optional("--package") is string specified ? DriverPackage.Open(specified) : WindowsDiagnostics.FindInstalledPackage() ?? throw new ArgumentException("Specify --package with the complete extracted package directory.");
-    var index = Optional("--index") is string number ? int.Parse(number, CultureInfo.InvariantCulture) : (int?)null;
-#if NETFRAMEWORK
-    using var currentProcess = System.Diagnostics.Process.GetCurrentProcess();
-    var self = currentProcess.MainModule?.FileName;
-#else
-    var self = Environment.ProcessPath;
-#endif
-    var helper = self is not null && !Path.GetFileNameWithoutExtension(self).Equals("dotnet", StringComparison.OrdinalIgnoreCase) ? self : null;
-    var client = new Com0ComClient(native, new()
+    var native = Optional("--package") is string specified ? DriverPackage.Open(specified)
+        : WindowsDiagnostics.FindInstalledPackage() ?? throw new ArgumentException("Specify --package with the extracted driver directory.");
+    var api = new Com0ComApi(native.DirectoryPath, new ClientOptions(
+        elevation: options.ContainsKey("--require-admin") ? ElevationMode.RequireAdministrator : ElevationMode.Prompt,
+        allowLegacyDriver: options.ContainsKey("--allow-legacy")));
+    CommandResult result;
+    switch (args[0])
     {
-        AllowLegacyDriver = options.ContainsKey("--allow-legacy"), ElevationHelperPath = helper,
-        Elevation = options.ContainsKey("--require-admin") ? ElevationMode.RequireAdministrator : ElevationMode.Prompt
-    });
-    Com0ComCommand[] plan = args[0] switch
-    {
-        "install-driver" => [Com0ComCommand.InstallDriver()],
-        "create" => [Com0ComCommand.CreatePair(new() { PortName = Optional("--a") ?? "COM#" }, new() { PortName = Optional("--b") ?? "COM#" }, index)],
-        "provision" => [Com0ComCommand.InstallDriver(), Com0ComCommand.CreatePair(new() { PortName = Optional("--a") ?? "COM#" }, new() { PortName = Optional("--b") ?? "COM#" }, index)],
-        "destroy" => [Com0ComCommand.RemovePair(index ?? throw new ArgumentException("--index is required."))],
-        "change" => [Com0ComCommand.ChangePort(Required("--port"), JsonSerializer.Deserialize<PortSettings>(File.ReadAllText(Required("--settings-file"))) ?? throw new ArgumentException("Invalid settings JSON."))],
-        "uninstall-driver" when options.ContainsKey("--all-pairs") => [new() { Operation = Com0ComOperation.UninstallDriver }],
-        "uninstall-driver" => throw new ArgumentException("Uninstall removes every com0com pair system-wide. Supply --all-pairs to acknowledge this scope."),
-        "native-help" => [new() { Operation = Com0ComOperation.Help }],
-        _ => throw new ArgumentException("Unknown command: " + args[0])
-    };
-    var result = await client.ExecuteBatchAsync(plan);
-    var environment = WindowsDiagnostics.InspectEnvironment();
-    Console.WriteLine(JsonSerializer.Serialize(new { Batch = result, Environment = environment, Pairs = client.GetPairs() }, json));
-    if (!result.Success) return 1;
-    // A successful setupc exit is not sufficient evidence of functional ports.
-    if (args[0] is "create" or "provision")
-    {
-        var installed = SetupOutputParser.ParsePairs(result.Results.Last().Output);
-        var pair = index ?? (installed.Count == 1 ? installed[0].Index : (int?)null);
-        var endpoints = environment.Devices.Where(d => pair.HasValue && (d.PortId == "CNCA" + pair || d.PortId == "CNCB" + pair)).ToArray();
-        if (result.RebootRequired || !pair.HasValue || endpoints.Length != 2 || endpoints.Any(d => !d.Healthy))
-        {
-            Console.Error.WriteLine("Pair readiness is unverified or blocked. Review device ProblemCode and Code Integrity events before using the ports.");
-            return 2;
-        }
+        case "install-driver": result = await api.InstallDriverAsync(); break;
+        case "create":
+        case "provision":
+            if (Optional("--index") is not null) throw new ArgumentException("Creation returns its allocated pair ID. --index is for destruction.");
+            var id = Optional("--b") is string b
+                ? await api.CreatePairAsync(Required("--a"), b)
+                : await api.CreateDeviceAsync(Required("--a"));
+            Console.WriteLine(JsonSerializer.Serialize(new { CreatedPairIndex = id, Device = api.GetDeviceInfo(id) }, json));
+            return 0;
+        case "destroy": result = await api.DestroyDeviceAsync(int.Parse(Required("--index"), CultureInfo.InvariantCulture)); break;
+        case "change": result = await api.ChangePortAsync(Required("--port"), JsonSerializer.Deserialize<PortSettings>(File.ReadAllText(Required("--settings-file"))) ?? throw new ArgumentException("Invalid settings JSON.")); break;
+        case "stop": result = await api.StopAsync(); break;
+        case "uninstall-driver": result = await api.UninstallDriverAsync(); break;
+        case "native-help": result = await new Com0ComClient(native, new ClientOptions(ElevationMode.RequireAdministrator)).ExecuteAsync(new(Com0ComOperation.Help)); break;
+        default: throw new ArgumentException("Unknown command: " + args[0]);
     }
-    return 0;
+    Console.WriteLine(JsonSerializer.Serialize(result, json));
+    return result.Success ? (result.RebootRequired ? 2 : 0) : 1;
 }
-catch (Exception e) when (e is ArgumentException or InvalidOperationException or IOException or System.ComponentModel.Win32Exception or JsonException)
+catch (Exception e) when (e is ArgumentException or InvalidOperationException or IOException or InvalidDataException or System.ComponentModel.Win32Exception or JsonException or Com0ComException)
 {
     Console.Error.WriteLine(e.Message);
     return 1;
