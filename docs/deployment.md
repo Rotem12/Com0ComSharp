@@ -29,7 +29,7 @@ Driver staging, device creation/removal, and configuration changes require admin
 
 `CommandResult.Success` describes the native command, not device readiness. Staging does not start a device. A pair needs both specific endpoints healthy. `CreateNamedPair` additionally verifies names and both endpoint states. The CLI returns exit 2 when creation succeeded but readiness cannot be established.
 
-The [simple API](vspe-migration.md) discovers an adjacent helper and exposes VSPE-style Pair calls. Named creation runs its adaptive sequence in one elevated invocation and preserves `CreatedPairIndex` in partial-failure results. Use the helper from the same release as the library.
+The [simple API](vspe-migration.md) discovers an adjacent helper, stages a missing driver and creates a VSPE-style Connector or Pair under one UAC request. `Stop()` destroys every machine-wide pair and uninstalls the driver. Use the helper from the same release as the library.
 
 The UAC refusal, alternate-credentials, and transport paths need validation under actual deployment policies. API support does not prove a domain permits elevation. WDAC/AppLocker may reject the helper or unsigned setup utility before the kernel checks the driver.
 

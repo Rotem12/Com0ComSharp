@@ -15,6 +15,7 @@ internal static class NamedPairSetup
         CancellationToken cancellationToken)
     {
         command.ToArguments(); // Validate the complete request before mutation.
+        var connector = command.Operation == Com0ComOperation.CreateNamedConnector;
         cancellationToken.ThrowIfCancellationRequested();
         var output = new StringBuilder();
         int? createdIndex = null;
@@ -26,12 +27,13 @@ internal static class NamedPairSetup
             await Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             entered = true;
             var a = ComPortNames.Normalize(command.PortA!.PortName);
-            var b = ComPortNames.Normalize(command.PortB!.PortName);
+            var b = connector ? null : ComPortNames.Normalize(command.PortB!.PortName);
             var unavailable = new HashSet<string>(getUnavailableNames(), StringComparer.OrdinalIgnoreCase);
-            if (unavailable.Contains(a) || unavailable.Contains(b))
+            if (unavailable.Contains(a) || (b is not null && unavailable.Contains(b)))
                 return Result(32, FailureKind.PortNameInUse, "A requested COM name is already present or reserved. No pair was created.");
             var previous = new HashSet<int>(getPairs().Select(p => p.Index));
-            var install = Com0ComCommand.CreatePair(command.PortA with { PortName = "-" }, command.PortB with { PortName = "-" });
+            var initialB = connector ? command.PortB! : command.PortB! with { PortName = "-" };
+            var install = Com0ComCommand.CreatePair(command.PortA with { PortName = "-" }, initialB);
             var first = await run(install, cancellationToken).ConfigureAwait(false);
             output.AppendLine(first.Output);
             // Native install can choose a different ID; never infer it from a snapshot.
@@ -47,7 +49,10 @@ internal static class NamedPairSetup
 
             // Convert and name A before converting B. This avoids automatically
             // allocated A/B names blocking one another (including swapped names).
-            foreach (var endpoint in new[] { (Id: current.A.Id, Name: a), (Id: current.B.Id, Name: b) })
+            var endpointsToConfigure = connector
+                ? new[] { (Id: current.A.Id, Name: (string?)a) }
+                : new[] { (Id: current.A.Id, Name: (string?)a), (Id: current.B.Id, Name: b) };
+            foreach (var endpoint in endpointsToConfigure)
             {
                 foreach (var settings in new[] { new PortSettings(portName: "COM#"), new PortSettings(realPortName: endpoint.Name) })
                 {
@@ -66,14 +71,14 @@ internal static class NamedPairSetup
                 }
             }
             var devices = getDevices();
-            var endpoints = new[] { (Id: current!.A!.Id, Name: a), (Id: current.B!.Id, Name: b) };
+            var endpoints = new[] { (Id: current!.A!.Id, Name: (string?)a), (Id: current.B!.Id, Name: b) };
             var unhealthy = endpoints.Where(endpoint => !devices.Any(d => string.Equals(d.PortId, endpoint.Id, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(d.PortName, endpoint.Name, StringComparison.OrdinalIgnoreCase) && d.Healthy)).Select(p => p.Id).ToArray();
+                && (endpoint.Name is null || string.Equals(d.PortName, endpoint.Name, StringComparison.OrdinalIgnoreCase)) && d.Healthy)).Select(p => p.Id).ToArray();
             if (unhealthy.Length != 0)
             {
                 var blocked = devices.Any(d => unhealthy.Contains(d.PortId, StringComparer.OrdinalIgnoreCase) && d.ProblemCode is 48 or 52);
                 return Result(-1, blocked ? FailureKind.DriverBlocked : FailureKind.ProcessFailed,
-                    "COM names were configured, but Windows did not report both endpoints started without a device problem. Inspect GetEnvironment() before using the pair.");
+                    "The requested COM endpoint and its paired device were not reported started without a device problem. Inspect GetEnvironment() before using the port.");
             }
             return Result(0, FailureKind.None);
         }

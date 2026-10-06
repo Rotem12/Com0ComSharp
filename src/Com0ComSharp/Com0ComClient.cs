@@ -19,6 +19,8 @@ public sealed class Com0ComClient
     /// <summary>Creates and verifies the requested standard COM names. The result includes the actual allocated pair index.</summary>
     public Task<CommandResult> CreateNamedPairAsync(string portA, string portB, bool emulateBaudRate = false, CancellationToken cancellationToken = default)
         => ExecuteAsync(Com0ComCommand.CreateNamedPair(portA, portB, emulateBaudRate), cancellationToken);
+    public Task<CommandResult> CreateNamedConnectorAsync(string portName, bool emulateBaudRate = false, CancellationToken cancellationToken = default)
+        => ExecuteAsync(Com0ComCommand.CreateNamedConnector(portName, emulateBaudRate), cancellationToken);
     public Task<CommandResult> DestroyPairAsync(int pairIndex, CancellationToken cancellationToken = default) => ExecuteAsync(Com0ComCommand.RemovePair(pairIndex), cancellationToken);
     public Task<CommandResult> ChangePortAsync(string portId, PortSettings settings, CancellationToken cancellationToken = default) => ExecuteAsync(Com0ComCommand.ChangePort(portId, settings), cancellationToken);
     /// <summary>Removes ALL com0com pairs and driver packages system-wide. Prefer DestroyPairAsync for app-owned pairs.</summary>
@@ -62,7 +64,7 @@ public sealed class Com0ComClient
 
     internal static void ValidatePackagePolicy(DriverPackage package, IEnumerable<Com0ComCommand> commands, bool allowLegacy)
     {
-        if (!commands.Any(c => c.Operation is Com0ComOperation.InstallDriver or Com0ComOperation.CreatePair or Com0ComOperation.CreateNamedPair or Com0ComOperation.UpdateDriver or Com0ComOperation.ReloadDriver)) return;
+        if (!commands.Any(c => c.Operation is Com0ComOperation.InstallDriver or Com0ComOperation.CreatePair or Com0ComOperation.CreateNamedPair or Com0ComOperation.CreateNamedConnector or Com0ComOperation.UpdateDriver or Com0ComOperation.ReloadDriver)) return;
         var inspection = package.Inspect();
         if (!inspection.IntegrityVerified) throw new InvalidDataException("The driver catalog is untrusted or a driver/INF file does not match its signed catalog.");
         if (!inspection.MicrosoftHardwareSigned && !allowLegacy)

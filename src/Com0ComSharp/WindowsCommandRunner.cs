@@ -20,7 +20,7 @@ public sealed class WindowsCommandRunner : ICom0ComCommandRunner
         var elevated = WindowsDiagnostics.IsAdministrator();
         if (!elevated && options.Elevation == ElevationMode.RequireAdministrator)
             return new(command.Operation, 740, "Administrator access is required. Run from your elevated installer or select ElevationMode.Prompt.", FailureKind.ElevationRequired);
-        if (command.Operation == Com0ComOperation.CreateNamedPair)
+        if (command.Operation is Com0ComOperation.CreateNamedPair or Com0ComOperation.CreateNamedConnector)
         {
             if (!elevated)
                 return new(command.Operation, 740, "Named pair creation requires Com0ComSharp.Tool.exe for one elevation request. Set ElevationHelperPath or run from an elevated installer.", FailureKind.ElevationRequired);

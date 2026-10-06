@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Com0ComSharp;
@@ -52,11 +53,11 @@ internal static class Program
     // A migration example, compiled as C# 7.3 but never run by this read-only sample.
     private static void PairLifecycleExample(string nativeDirectory)
     {
-        var api = new Com0ComApi(nativeDirectory, new ClientOptions(allowLegacyDriver: true));
-        int deviceId = api.CreatePair("COM21", "COM22");
-        api.SetBaudRateEmulation(deviceId, true);
+        var helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Com0ComSharp.Tool.exe");
+        var api = new Com0ComApi(nativeDirectory, new ClientOptions(
+            elevation: ElevationMode.Prompt, elevationHelperPath: helper, allowLegacyDriver: true));
+        int deviceId = api.CreateDevice(21, emulateBaudRate: true);
         api.DestroyDevice(deviceId);
-        deviceId = api.CreateDevice("Pair", "21;22;0");
-        api.DestroyPair(deviceId);
+        api.Stop(); // Intentionally removes every com0com pair and uninstalls the shared driver.
     }
 }

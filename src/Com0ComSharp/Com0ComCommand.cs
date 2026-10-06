@@ -8,7 +8,7 @@ public enum Com0ComOperation
 {
     InstallDriver, CreatePair, RemovePair, ChangePort, List, Help, BusyNames,
     UpdateDriver, ReloadDriver, UninstallDriver, EnableAll, DisableAll,
-    CleanOldInfFiles, UpdateFriendlyNames, ListFriendlyNames, CreateNamedPair
+    CleanOldInfFiles, UpdateFriendlyNames, ListFriendlyNames, CreateNamedPair, CreateNamedConnector
 }
 
 /// <summary>An allowlisted setupc operation; there is no arbitrary shell command interface.</summary>
@@ -44,6 +44,11 @@ public sealed record Com0ComCommand
         => new() { Operation = Com0ComOperation.CreateNamedPair,
             PortA = new(portName: ComPortNames.Normalize(portA), emulateBaudRate: emulateBaudRate),
             PortB = new(portName: ComPortNames.Normalize(portB), emulateBaudRate: emulateBaudRate) };
+    /// <summary>Creates a standard COM endpoint with a hidden paired endpoint and optional baud-rate emulation.</summary>
+    public static Com0ComCommand CreateNamedConnector(string portName, bool emulateBaudRate = false)
+        => new() { Operation = Com0ComOperation.CreateNamedConnector,
+            PortA = new(portName: ComPortNames.Normalize(portName), emulateBaudRate: emulateBaudRate),
+            PortB = new(portName: "-", hiddenMode: true) };
     public static Com0ComCommand RemovePair(int pairIndex) => new() { Operation = Com0ComOperation.RemovePair, PairIndex = pairIndex };
     public static Com0ComCommand ChangePort(string portId, PortSettings settings) => new() { Operation = Com0ComOperation.ChangePort, PortId = portId, PortA = settings };
 
@@ -66,6 +71,12 @@ public sealed record Com0ComCommand
                 args.Add("install");
                 args.Add((PortA! with { PortName = "-" }).ToParameterString());
                 args.Add((PortB! with { PortName = "-" }).ToParameterString());
+                break;
+            case Com0ComOperation.CreateNamedConnector:
+                ValidateNamedConnector();
+                args.Add("install");
+                args.Add((PortA! with { PortName = "-" }).ToParameterString());
+                args.Add(PortB!.ToParameterString());
                 break;
             case Com0ComOperation.CreatePair:
                 if (PortA?.RealPortName is not null || PortB?.RealPortName is not null)
@@ -108,5 +119,13 @@ public sealed record Com0ComCommand
         var a = ComPortNames.Normalize(PortA?.PortName);
         var b = ComPortNames.Normalize(PortB?.PortName);
         if (a == b) throw new ArgumentException("The two endpoints must have different COM names.");
+    }
+
+    internal void ValidateNamedConnector()
+    {
+        if (PairIndex.HasValue || PortA?.RealPortName is not null
+            || PortB?.PortName != "-" || PortB.HiddenMode != true || PortB.RealPortName is not null)
+            throw new ArgumentException("A named Connector needs one requested COM name and a hidden paired endpoint.");
+        ComPortNames.Normalize(PortA?.PortName);
     }
 }

@@ -1,6 +1,6 @@
 # .NET Framework compatibility
 
-Version 0.3.0 contains `net462`, `net48`, `net8.0-windows`, and `net10.0-windows` assemblies in one NuGet package. NuGet selects `net462` for Framework 4.6.2/4.7/4.7.1/4.7.2 and `net48` for 4.8/4.8.1. Modern .NET 9 can use the .NET 8 assembly. Driver architecture and Windows signing policy are independent of the managed target.
+Version 0.4.0 contains `net462`, `net48`, `net8.0-windows`, and `net10.0-windows` assemblies in one NuGet package. NuGet selects `net462` for Framework 4.6.2/4.7/4.7.1/4.7.2 and `net48` for 4.8/4.8.1. Modern .NET 9 can use the .NET 8 assembly. Driver architecture and Windows signing policy are independent of the managed target.
 
 All targets expose the same public operations. Framework-compatible code handles process arguments, event-based asynchronous process completion, cancellable waits, pipe ACLs, ANSI logs, hashing, and stream IO. A stopped wait does not roll back native changes. On Framework, process cancellation terminates the directly launched process when permitted; descendant processes can continue because Framework lacks the process-tree `Kill` overload. Windows elevation boundaries can prevent termination on either runtime.
 
@@ -22,7 +22,7 @@ For a Framework 4.6.2 application that uses the optional download API, enable sy
 ## Verification on 2026-10-05
 
 - Release solution build: zero warnings/errors across all library and tool targets.
-- 79 tests on each of the four library targets: 316 test executions. Coverage includes Windows argument parsing, process wait cancellation, protected pipe JSON responses, constructor-based API compatibility, bounded hash-verified downloads, VSPE Pair syntax, adaptive naming, device failures and partial results.
+- At the 0.3.0 release, 79 tests ran on each of the four library targets (316 executions). Coverage included Windows argument parsing, process wait cancellation, protected pipe JSON responses, constructor-based API compatibility, bounded hash-verified downloads, VSPE Pair syntax, adaptive naming, device failures and partial results.
 - C# 7.3 sample builds as a NuGet consumer for Framework 4.6.2, 4.7.2, 4.8, and 4.8.1, then runs read-only discovery and real catalog/member signature inspection on the Windows 11 x64 host. The older target also completes a SHA-256-verified HTTPS download using the sample's TLS configuration.
 - OS version diagnostics use the native version result, avoiding Framework's unmanifested `Environment.OSVersion` compatibility value.
 

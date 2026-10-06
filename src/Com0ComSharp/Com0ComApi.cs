@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace Com0ComSharp;
 
-/// <summary>Simple, VSPE-style pair management. Changes throw Com0ComException on failure; created ports persist until explicitly destroyed.</summary>
+/// <summary>Simple, VSPE-style Connector and Pair management. Changes throw Com0ComException on failure; created ports persist until explicitly destroyed.</summary>
 public sealed class Com0ComApi
 {
     private readonly Func<IReadOnlyList<VirtualPortPair>> getPairs;
@@ -30,18 +30,53 @@ public sealed class Com0ComApi
         => CreatePairAsync(portA, portB, emulateBaudRate).GetAwaiter().GetResult();
     public async Task<int> CreatePairAsync(string portA, string portB, bool emulateBaudRate = false, CancellationToken cancellationToken = default)
     {
-        var result = Check(await Client.CreateNamedPairAsync(portA, portB, emulateBaudRate, cancellationToken).ConfigureAwait(false));
+        var result = await CreateWithDriverIfNeededAsync(Com0ComCommand.CreateNamedPair(portA, portB, emulateBaudRate), cancellationToken).ConfigureAwait(false);
         return result.CreatedPairIndex ?? throw new InvalidDataException("Named pair setup did not return its allocated ID. Inspect devices before retrying.");
     }
 
-    /// <summary>Accepts VSPE's basic Pair initialization string: "21;22;0" (COM numbers; baud emulation 0/1).</summary>
-    public int CreateDevice(string name, string initString) => CreateDeviceAsync(name, initString).GetAwaiter().GetResult();
+    /// <summary>Creates one standard COM port with a hidden paired endpoint. Baud-rate emulation is optional; set the actual rate when opening SerialPort.</summary>
+    public int CreateDevice(string portName, bool emulateBaudRate = false)
+        => CreateDeviceAsync(portName, emulateBaudRate).GetAwaiter().GetResult();
+    public async Task<int> CreateDeviceAsync(string portName, bool emulateBaudRate = false, CancellationToken cancellationToken = default)
+    {
+        var result = await CreateWithDriverIfNeededAsync(Com0ComCommand.CreateNamedConnector(portName, emulateBaudRate), cancellationToken).ConfigureAwait(false);
+        return result.CreatedPairIndex ?? throw new InvalidDataException("Connector setup did not return its allocated ID. Inspect devices before retrying.");
+    }
+
+    /// <summary>Accepts a numeric COM index, such as 21.</summary>
+    public int CreateDevice(int portNumber, bool emulateBaudRate = false)
+        => CreateDevice("COM" + portNumber.ToString(CultureInfo.InvariantCulture), emulateBaudRate);
+    public Task<int> CreateDeviceAsync(int portNumber, bool emulateBaudRate = false, CancellationToken cancellationToken = default)
+        => CreateDeviceAsync("COM" + portNumber.ToString(CultureInfo.InvariantCulture), emulateBaudRate, cancellationToken);
+
+    /// <summary>Creates a VSPE Connector from its port index and baud-emulation flag, such as CreateDevice("Connector", "21;1").</summary>
+    public int CreateDevice(string name, string initString)
+    {
+        if (string.Equals(name, "Connector", StringComparison.OrdinalIgnoreCase))
+        {
+            var fields = initString?.Split(';') ?? throw new ArgumentNullException(nameof(initString));
+            if (fields.Length != 2 || fields[1] is not ("0" or "1"))
+                throw new ArgumentException("Use Connector initialization \"21;1\": one COM number and baud-rate emulation 0 or 1.", nameof(initString));
+            return CreateDevice("COM" + fields[0], fields[1] == "1");
+        }
+        var command = ParseVspePair(name, initString);
+        return CreatePair(command.PortA!.PortName!, command.PortB!.PortName!, command.PortA.EmulateBaudRate == true);
+    }
+
     public Task<int> CreateDeviceAsync(string name, string initString, CancellationToken cancellationToken = default)
     {
+        if (string.Equals(name, "Connector", StringComparison.OrdinalIgnoreCase))
+        {
+            var fields = initString?.Split(';') ?? throw new ArgumentNullException(nameof(initString));
+            if (fields.Length != 2 || fields[1] is not ("0" or "1"))
+                throw new ArgumentException("Use Connector initialization \"21;1\": one COM number and baud-rate emulation 0 or 1.", nameof(initString));
+            return CreateDeviceAsync("COM" + fields[0], fields[1] == "1", cancellationToken);
+        }
         var command = ParseVspePair(name, initString);
         return CreatePairAsync(command.PortA!.PortName!, command.PortB!.PortName!, command.PortA.EmulateBaudRate == true, cancellationToken);
     }
 
+    /// <summary>Accepts VSPE's basic Pair initialization string: "21;22;0" (COM numbers; baud emulation 0/1).</summary>
     internal static Com0ComCommand ParseVspePair(string name, string initString)
     {
         if (!string.Equals(name, "Pair", StringComparison.OrdinalIgnoreCase))
@@ -63,6 +98,10 @@ public sealed class Com0ComApi
     public CommandResult UninstallDriver() => UninstallDriverAsync().GetAwaiter().GetResult();
     public async Task<CommandResult> UninstallDriverAsync(CancellationToken cancellationToken = default)
         => Check(await Client.UninstallDriverAsync(cancellationToken).ConfigureAwait(false));
+
+    /// <summary>Destroys all com0com pairs on this PC and uninstalls the shared driver.</summary>
+    public CommandResult Stop() => StopAsync().GetAwaiter().GetResult();
+    public Task<CommandResult> StopAsync(CancellationToken cancellationToken = default) => UninstallDriverAsync(cancellationToken);
 
     /// <summary>Lists all installed com0com pairs. Their IDs can be sparse; enumerate this list rather than 0..count-1.</summary>
     public IReadOnlyList<VirtualPortPair> GetDevices() => getPairs();
@@ -94,6 +133,34 @@ public sealed class Com0ComApi
     }
 
     private static CommandResult Check(CommandResult result) { result.ThrowIfFailed(); return result; }
+
+    private async Task<CommandResult> CreateWithDriverIfNeededAsync(Com0ComCommand create, CancellationToken cancellationToken)
+    {
+        // Registry/package discovery is read-only. Stage the driver only when no
+        // complete com0com package is registered, then create the port in the
+        // same typed plan so the elevation helper asks only once.
+        if (WindowsDiagnostics.FindInstalledPackage() is not null)
+            return Check(await Client.ExecuteAsync(create, cancellationToken).ConfigureAwait(false));
+
+        if (Client.Options.Elevation == ElevationMode.Prompt && Client.Options.ElevationHelperPath is null && !WindowsDiagnostics.IsAdministrator())
+            throw new Com0ComException(new(create.Operation, 740,
+                "Deploy the matching Com0ComSharp.Tool.exe beside the application for one UAC approval covering driver installation and port creation.",
+                FailureKind.ElevationRequired));
+
+        var batch = await Client.ExecuteBatchAsync(new[] { Com0ComCommand.InstallDriver(), create }, cancellationToken).ConfigureAwait(false);
+        foreach (var result in batch.Results)
+        {
+            if (!result.Success) result.ThrowIfFailed();
+            if (result.RebootRequired)
+                throw new InvalidOperationException("Driver installation requires a Windows restart before the port can be created. Restart, then retry the operation.");
+        }
+        if (batch.Results.Count < 2)
+        {
+            if (batch.Results.Count == 0) throw new InvalidOperationException("The elevation helper did not complete driver installation.");
+            throw new InvalidOperationException("The elevation helper stopped before creating the port. Inspect the driver result before retrying.");
+        }
+        return Check(batch.Results[1]);
+    }
 
     private static ClientOptions DiscoverHelper(ClientOptions? options)
     {
