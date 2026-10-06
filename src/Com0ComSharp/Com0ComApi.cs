@@ -30,7 +30,8 @@ public sealed class Com0ComApi
         => CreatePairAsync(portA, portB, emulateBaudRate).GetAwaiter().GetResult();
     public async Task<int> CreatePairAsync(string portA, string portB, bool emulateBaudRate = false, CancellationToken cancellationToken = default)
     {
-        var result = await CreateWithDriverIfNeededAsync(Com0ComCommand.CreateNamedPair(portA, portB, emulateBaudRate), cancellationToken).ConfigureAwait(false);
+        var command = Com0ComCommand.CreateNamedPair(portA, portB, emulateBaudRate);
+        var result = await CreateWithDriverIfNeededAsync(command, cancellationToken).ConfigureAwait(false);
         return result.CreatedPairIndex ?? throw new InvalidDataException("Named pair setup did not return its allocated ID. Inspect devices before retrying.");
     }
 
@@ -39,7 +40,8 @@ public sealed class Com0ComApi
         => CreateDeviceAsync(portName, emulateBaudRate).GetAwaiter().GetResult();
     public async Task<int> CreateDeviceAsync(string portName, bool emulateBaudRate = false, CancellationToken cancellationToken = default)
     {
-        var result = await CreateWithDriverIfNeededAsync(Com0ComCommand.CreateNamedConnector(portName, emulateBaudRate), cancellationToken).ConfigureAwait(false);
+        var command = Com0ComCommand.CreateNamedConnector(portName, emulateBaudRate);
+        var result = await CreateWithDriverIfNeededAsync(command, cancellationToken).ConfigureAwait(false);
         return result.CreatedPairIndex ?? throw new InvalidDataException("Connector setup did not return its allocated ID. Inspect devices before retrying.");
     }
 
@@ -90,18 +92,31 @@ public sealed class Com0ComApi
 
     public CommandResult DestroyDevice(int deviceIndex) => DestroyDeviceAsync(deviceIndex).GetAwaiter().GetResult();
     public async Task<CommandResult> DestroyDeviceAsync(int deviceIndex, CancellationToken cancellationToken = default)
-        => Check(await Client.DestroyPairAsync(deviceIndex, cancellationToken).ConfigureAwait(false));
+        => Check(WindowsDiagnostics.IsAdministrator()
+            ? await Client.DestroyPairAsync(deviceIndex, cancellationToken).ConfigureAwait(false)
+            : await ManagementBrokerClient.ExecuteAsync(Client.Package, Com0ComCommand.RemovePair(deviceIndex), Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
     public CommandResult DestroyPair(int pairIndex) => DestroyDevice(pairIndex);
     public Task<CommandResult> DestroyPairAsync(int pairIndex, CancellationToken cancellationToken = default) => DestroyDeviceAsync(pairIndex, cancellationToken);
 
-    /// <summary>Removes every com0com pair and the shared driver on this PC.</summary>
+    /// <summary>Removes the shared driver and every com0com pair on this PC. Requires administrator approval.</summary>
     public CommandResult UninstallDriver() => UninstallDriverAsync().GetAwaiter().GetResult();
     public async Task<CommandResult> UninstallDriverAsync(CancellationToken cancellationToken = default)
         => Check(await Client.UninstallDriverAsync(cancellationToken).ConfigureAwait(false));
 
-    /// <summary>Destroys all com0com pairs on this PC and uninstalls the shared driver.</summary>
+    /// <summary>Destroys all com0com pairs on this PC and leaves the shared driver installed.</summary>
     public CommandResult Stop() => StopAsync().GetAwaiter().GetResult();
-    public Task<CommandResult> StopAsync(CancellationToken cancellationToken = default) => UninstallDriverAsync(cancellationToken);
+    public async Task<CommandResult> StopAsync(CancellationToken cancellationToken = default)
+    {
+        if (!WindowsDiagnostics.IsAdministrator())
+            return Check(await ManagementBrokerClient.StopAllAsync(Client.Package, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
+        foreach (var pair in GetDevices())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await Client.DestroyPairAsync(pair.Index, cancellationToken).ConfigureAwait(false);
+            if (!result.Success) return Check(result);
+        }
+        return new(Com0ComOperation.RemovePair, 0, "All com0com pairs were removed; the driver remains installed.", FailureKind.None);
+    }
 
     /// <summary>Lists all installed com0com pairs. Their IDs can be sparse; enumerate this list rather than 0..count-1.</summary>
     public IReadOnlyList<VirtualPortPair> GetDevices() => getPairs();
@@ -140,7 +155,9 @@ public sealed class Com0ComApi
         // complete com0com package is registered, then create the port in the
         // same typed plan so the elevation helper asks only once.
         if (WindowsDiagnostics.FindInstalledPackage() is not null)
-            return Check(await Client.ExecuteAsync(create, cancellationToken).ConfigureAwait(false));
+            return Check(WindowsDiagnostics.IsAdministrator()
+                ? await Client.ExecuteAsync(create, cancellationToken).ConfigureAwait(false)
+                : await ManagementBrokerClient.ExecuteAsync(Client.Package, create, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
 
         if (Client.Options.Elevation == ElevationMode.Prompt && Client.Options.ElevationHelperPath is null && !WindowsDiagnostics.IsAdministrator())
             throw new Com0ComException(new(create.Operation, 740,

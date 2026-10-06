@@ -29,6 +29,7 @@ jobs:
           }
       - run: dotnet publish src/Com0ComSharp.Tool -f net8.0-windows -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o .artifacts/tool
       - run: dotnet publish src/Com0ComSharp.Tool -f net48 -c Release -o .artifacts/tool-net48
+      - run: dotnet publish src/Com0ComSharp.Broker -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o .artifacts/broker
       - name: Verify and archive Framework helper
         shell: pwsh
         run: |
@@ -41,4 +42,5 @@ jobs:
           path: |
             .artifacts/packages/*.nupkg
             .artifacts/tool/Com0ComSharp.Tool.exe
+            .artifacts/broker/Com0ComSharp.Broker.exe
             .artifacts/Com0ComSharp.Tool.net48.zip

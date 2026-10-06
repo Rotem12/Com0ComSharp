@@ -1,6 +1,6 @@
 # .NET Framework consumer
 
-Read-only console sample for .NET Framework 4.6.2, 4.7.2, 4.8, and 4.8.1. It exercises Windows diagnostics and the public settings/options API. Optional package inspection also exercises simple facade discovery. The sample compiles a Connector call with helper-based UAC and full Stop cleanup without executing it. Package inspection and the pinned installer download never run an installer or request elevation.
+Read-only console sample for .NET Framework 4.6.2, 4.7.2, 4.8, and 4.8.1. It exercises Windows diagnostics and the public settings/options API. Optional package inspection also exercises simple facade discovery. The sample compiles Connector creation and Stop cleanup without executing them. Package inspection and the pinned installer download never run an installer or request elevation.
 
 ```powershell
 dotnet build samples/Com0ComSharp.Framework -c Release

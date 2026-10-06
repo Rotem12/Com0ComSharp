@@ -1,6 +1,6 @@
 # .NET Framework compatibility
 
-Version 0.4.0 contains `net462`, `net48`, `net8.0-windows`, and `net10.0-windows` assemblies in one NuGet package. NuGet selects `net462` for Framework 4.6.2/4.7/4.7.1/4.7.2 and `net48` for 4.8/4.8.1. Modern .NET 9 can use the .NET 8 assembly. Driver architecture and Windows signing policy are independent of the managed target.
+Version 0.5.0 contains `net462`, `net48`, `net8.0-windows`, and `net10.0-windows` assemblies in one NuGet package. NuGet selects `net462` for Framework 4.6.2/4.7/4.7.1/4.7.2 and `net48` for 4.8/4.8.1. Modern .NET 9 can use the .NET 8 assembly. Driver architecture and Windows signing policy are independent of the managed target.
 
 All targets expose the same public operations. Framework-compatible code handles process arguments, event-based asynchronous process completion, cancellable waits, pipe ACLs, ANSI logs, hashing, and stream IO. A stopped wait does not roll back native changes. On Framework, process cancellation terminates the directly launched process when permitted; descendant processes can continue because Framework lacks the process-tree `Kill` overload. Windows elevation boundaries can prevent termination on either runtime.
 
@@ -10,6 +10,7 @@ Settings/options/typed commands retain init-property syntax for modern callers a
 
 - `Com0ComSharp.Tool.net48.zip`: Framework 4.8 helper, including its executable, config, and dependency DLLs. Extract the complete archive. Requires the installed Framework 4.8 or 4.8.1 runtime.
 - `Com0ComSharp.Tool.exe`: modern self-contained Windows x64 helper. Framework applications can also use it without installing .NET 8. Publish from the .NET 8 target explicitly now that the tool has multiple targets.
+- `Com0ComSharp.Broker.exe`: self-contained Windows x64 management service. The same broker supports Framework and modern .NET clients.
 
 The wire protocol remains typed JSON; both helpers use the same catalog validation, SHA-256 fingerprint check, operation allowlist, and protected result pipe. No persistent service or Windows security changes are added for Framework support.
 

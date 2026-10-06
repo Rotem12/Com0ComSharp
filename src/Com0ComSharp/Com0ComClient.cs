@@ -23,7 +23,7 @@ public sealed class Com0ComClient
         => ExecuteAsync(Com0ComCommand.CreateNamedConnector(portName, emulateBaudRate), cancellationToken);
     public Task<CommandResult> DestroyPairAsync(int pairIndex, CancellationToken cancellationToken = default) => ExecuteAsync(Com0ComCommand.RemovePair(pairIndex), cancellationToken);
     public Task<CommandResult> ChangePortAsync(string portId, PortSettings settings, CancellationToken cancellationToken = default) => ExecuteAsync(Com0ComCommand.ChangePort(portId, settings), cancellationToken);
-    /// <summary>Removes ALL com0com pairs and driver packages system-wide. Prefer DestroyPairAsync for app-owned pairs.</summary>
+    /// <summary>Removes the driver and all com0com pairs system-wide. Requires administrator approval.</summary>
     public Task<CommandResult> UninstallDriverAsync(CancellationToken cancellationToken = default) => ExecuteAsync(new() { Operation = Com0ComOperation.UninstallDriver }, cancellationToken);
     public Task<CommandResult> UpdateDriverAsync(CancellationToken cancellationToken = default) => ExecuteAsync(new() { Operation = Com0ComOperation.UpdateDriver }, cancellationToken);
     public Task<CommandResult> ReloadDriverAsync(CancellationToken cancellationToken = default) => ExecuteAsync(new() { Operation = Com0ComOperation.ReloadDriver }, cancellationToken);

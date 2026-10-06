@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Version>0.5.0</Version>
+    <AssemblyName>Com0ComSharp.Broker</AssemblyName>
+    <Description>Privileged local service for non-elevated com0com pair management.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Com0ComSharp/Com0ComSharp.csproj" />
+  </ItemGroup>
+</Project>

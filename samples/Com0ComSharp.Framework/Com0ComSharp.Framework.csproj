@@ -17,6 +17,6 @@
     <ProjectReference Include="../../src/Com0ComSharp/Com0ComSharp.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UsePackagedLibrary)' == 'true'">
-    <PackageReference Include="Com0ComSharp" Version="0.4.0" />
+    <PackageReference Include="Com0ComSharp" Version="0.5.0" />
   </ItemGroup>
 </Project>

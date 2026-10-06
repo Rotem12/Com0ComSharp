@@ -13,17 +13,17 @@ Manage com0com virtual serial port pairs from C# on Windows.
 - Read device and driver diagnostics. The companion helper can handle one UAC prompt for a batch of changes.
 - Use the ports with `System.IO.Ports.SerialPort`.
 
-Driver installation/removal requires administrator approval; uninstalling removes all com0com pairs on the machine. The upstream driver is legacy cross-signed, and Windows security policy may block it. See the [compatibility report](docs/driver-verification.md).
+Driver installation/removal requires administrator approval; uninstalling removes all com0com pairs on the machine. The broker allows any local user to create/remove pairs and stop all pairs, so install it only where that shared permission is appropriate. The upstream driver is legacy cross-signed, and Windows security policy may block it. See the [compatibility report](docs/driver-verification.md).
 
 ## Install
 
-Download `Com0ComSharp.0.4.0.nupkg` from [Releases](https://github.com/Rotem12/Com0ComSharp/releases); the package is not on NuGet.org. Install it from the directory where you saved it:
+Download `Com0ComSharp.0.5.0.nupkg` from [Releases](https://github.com/Rotem12/Com0ComSharp/releases); the package is not on NuGet.org. Install it from the directory where you saved it:
 
 ```powershell
-dotnet add package Com0ComSharp --version 0.4.0 --source C:\Downloads\Com0ComSharp
+dotnet add package Com0ComSharp --version 0.5.0 --source C:\Downloads\Com0ComSharp
 ```
 
-You also need the native com0com driver files. Use the [extraction script](scripts/Get-DriverPackage.ps1) or an existing installation. Place the matching release's `Com0ComSharp.Tool.exe` beside your app for automatic helper discovery. A .NET Framework 4.8 helper archive is also available.
+You also need the native driver files and the matching release's `Com0ComSharp.Tool.exe` and `Com0ComSharp.Broker.exe`. Use the [extraction script](scripts/Get-DriverPackage.ps1) to obtain the driver. Run [broker setup](scripts/Install-ManagementBroker.ps1) once with administrator approval; it installs the driver and a protected Windows service. The service lets standard-user apps create/remove pairs without another elevation prompt. A .NET Framework 4.8 helper archive is also available.
 
 ## Create a port
 
@@ -38,7 +38,7 @@ int id = api.CreateDevice("21", emulateBaudRate: true);
 api.DestroyDevice(id);
 ```
 
-Async methods are available for UI apps. `CreateDevice("Pair", "21;22;0")` accepts basic VSPE Pair syntax. Deploy the matching helper beside the app for one UAC request to install the driver when needed and create a port. See the [migration guide](docs/vspe-migration.md). Ports persist until removed. Failures throw `Com0ComException` with diagnostic results.
+Async methods are available for UI apps. `CreateDevice("Pair", "21;22;0")` accepts basic VSPE Pair syntax. After the one-time elevated setup, pair creation, `DestroyDevice`, and `Stop` use the broker without elevation. `Stop` removes all pairs but keeps the driver installed; call `UninstallDriver` only when removing the driver. See the [migration guide](docs/vspe-migration.md). Ports persist until removed. Failures throw `Com0ComException` with diagnostic results.
 
 `allowLegacyDriver` acknowledges the driver’s signing status without overriding Windows policy. C# 7.3 is supported.
 

@@ -58,6 +58,6 @@ internal static class Program
             elevation: ElevationMode.Prompt, elevationHelperPath: helper, allowLegacyDriver: true));
         int deviceId = api.CreateDevice(21, emulateBaudRate: true);
         api.DestroyDevice(deviceId);
-        api.Stop(); // Intentionally removes every com0com pair and uninstalls the shared driver.
+        api.Stop(); // Removes every com0com pair; the shared driver remains installed.
     }
 }
