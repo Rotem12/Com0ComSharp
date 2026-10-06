@@ -1,6 +1,6 @@
 # .NET Framework compatibility
 
-Version 0.6.0-preview.2 contains `net462`, `net48`, `net8.0-windows`, and `net10.0-windows` assemblies in one NuGet package. NuGet selects `net462` for Framework 4.6.2/4.7/4.7.1/4.7.2 and `net48` for 4.8/4.8.1. Modern .NET 9 can use the .NET 8 assembly. Driver architecture and Windows signing policy are independent of the managed target.
+Version 0.6.0-preview.3 contains `net462`, `net48`, `net8.0-windows`, and `net10.0-windows` assemblies in one NuGet package. NuGet selects `net462` for Framework 4.6.2/4.7/4.7.1/4.7.2 and `net48` for 4.8/4.8.1. Modern .NET 9 can use the .NET 8 assembly. Driver architecture and Windows signing policy are independent of the managed target.
 
 All targets expose the same public operations. Framework-compatible code handles process arguments, event-based asynchronous process completion, cancellable waits, pipe ACLs, ANSI logs, hashing, and stream IO. A stopped wait does not roll back native changes. On Framework, process cancellation terminates the directly launched process when permitted; descendant processes can continue because Framework lacks the process-tree `Kill` overload. Windows elevation boundaries can prevent termination on either runtime.
 

@@ -1,5 +1,6 @@
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 using System.Text;
 using System.Text.Json;
 
@@ -46,7 +47,7 @@ internal static class ManagementBrokerClient
             await pipe.ConnectAsync(3000, cancellationToken).ConfigureAwait(false);
             if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle.DangerousGetHandle(), out var serverPid)
                 || !IsInstalledBroker(serverPid))
-                return new(command?.Operation ?? Com0ComOperation.Help, -1, "Rejected a connection that did not come from the installed Com0ComSharp broker service.", FailureKind.HelperFailed);
+                return new(command?.Operation ?? Com0ComOperation.Help, -1, "Rejected the pipe server because its process does not match the broker executable registered for the Com0ComSharp Windows service.", FailureKind.HelperFailed);
             using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true);
             using var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, true);
             await writer.WriteLineAsync(JsonSerializer.Serialize(request)).ConfigureAwait(false);
@@ -66,6 +67,8 @@ internal static class ManagementBrokerClient
 
     private static bool IsInstalledBroker(uint processId)
     {
+        var serviceImage = GetRegisteredServiceImagePath();
+        if (serviceImage is null) return false;
         var process = OpenProcess(0x1000, false, processId);
         if (process == IntPtr.Zero) return false;
         try
@@ -73,11 +76,44 @@ internal static class ManagementBrokerClient
             var path = new StringBuilder(32768);
             var size = path.Capacity;
             if (!QueryFullProcessImageName(process, 0, path, ref size)) return false;
-            var programFiles = Environment.GetEnvironmentVariable("ProgramW6432") ?? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            var expected = Path.Combine(programFiles, "Com0ComSharp", "Com0ComSharp.Broker.exe");
-            return string.Equals(Path.GetFullPath(path.ToString()), Path.GetFullPath(expected), StringComparison.OrdinalIgnoreCase);
+            return string.Equals(Path.GetFullPath(path.ToString()), serviceImage, StringComparison.OrdinalIgnoreCase);
         }
         finally { CloseHandle(process); }
+    }
+
+    private static string? GetRegisteredServiceImagePath()
+    {
+        try
+        {
+            using var service = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\Com0ComSharpBroker");
+            var commandLine = service?.GetValue("ImagePath") as string;
+            if (commandLine is null || commandLine.Trim().Length == 0) return null;
+            commandLine = Environment.ExpandEnvironmentVariables(commandLine.Trim());
+            var marker = commandLine.IndexOf("Com0ComSharp.Broker.exe", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0) return null;
+            var executable = commandLine.Substring(0, marker + "Com0ComSharp.Broker.exe".Length).Trim().Trim('"');
+            if (executable.StartsWith(@"\??\", StringComparison.Ordinal)) executable = executable.Substring(4);
+            if (!string.Equals(Path.GetFileName(executable), "Com0ComSharp.Broker.exe", StringComparison.OrdinalIgnoreCase)) return null;
+            var fullPath = Path.GetFullPath(executable);
+            var directory = Path.GetDirectoryName(fullPath);
+            if (directory is null || !IsProtectedInstallDirectory(directory)) return null;
+            return fullPath;
+        }
+        catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException or System.Security.SecurityException or NotSupportedException)
+        { return null; }
+    }
+
+    private static bool IsProtectedInstallDirectory(string directory)
+    {
+        var roots = new[]
+        {
+            Environment.GetEnvironmentVariable("ProgramW6432"),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
+        };
+        return roots.Where(root => !string.IsNullOrWhiteSpace(root))
+            .Select(root => Path.GetFullPath(Path.Combine(root!, "Com0ComSharp")))
+            .Any(root => string.Equals(root, directory, StringComparison.OrdinalIgnoreCase));
     }
 
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint processId);
