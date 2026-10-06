@@ -69,7 +69,7 @@ public sealed class Com0ComApi
         return new(Com0ComOperation.InstallDriver, 740, "Deploy Com0ComSharp.Tool.exe and enable elevation prompts so Windows can request administrator approval for first-time setup.", FailureKind.ElevationRequired);
     }
 
-    /// <summary>Creates active standard COM ports and returns their stable com0com pair ID. Requires free/unreserved names.</summary>
+    /// <summary>Creates active COM ports and returns their stable com0com pair ID. Requires free/unreserved names.</summary>
     public int CreatePair(string portA, string portB, bool emulateBaudRate = false)
         => CreatePairAsync(portA, portB, emulateBaudRate).GetAwaiter().GetResult();
     public async Task<int> CreatePairAsync(string portA, string portB, bool emulateBaudRate = false, CancellationToken cancellationToken = default)

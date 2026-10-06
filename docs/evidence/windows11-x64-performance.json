@@ -1,0 +1,48 @@
+{
+  "Date": "2026-10-06",
+  "Version": "0.7.0",
+  "WindowsBuild": "26200",
+  "CallerElevated": false,
+  "DriverModified": false,
+  "SecuritySettingsChanged": false,
+  "PreviousBroker": {
+    "Version": "0.6.1",
+    "ConnectorCreateMilliseconds": 5502.1516,
+    "ConnectorDestroyMilliseconds": 4106.0548,
+    "Samples": 1
+  },
+  "DirectBackend": {
+    "FirstConnectorCreateMilliseconds": 449.4879,
+    "FirstConnectorDestroyMilliseconds": 427.0639,
+    "RepeatedApiConnectorCreateMilliseconds": [271.9908, 264.5782, 281.2543, 263.4387, 262.7598, 261.7508],
+    "RepeatedApiConnectorDestroyMilliseconds": [420.3082, 419.5387, 412.0018, 410.3614, 428.5652, 414.1926],
+    "ApiPairCreateMilliseconds": 266.4977,
+    "CreateWithExistingOpenPairMilliseconds": [303.5213, 251.7427, 276.574],
+    "RenameAndBaudEmulationMilliseconds": 116.7618,
+    "StopThreeConnectorsMilliseconds": 1109.9395
+  },
+  "Validation": {
+    "NoRoutineUac": true,
+    "SerialPortEnumeration": true,
+    "BinaryBytesEachDirection": 32768,
+    "TransferAfterRename": true,
+    "ExistingOpenPairUnaffected": true,
+    "DuplicateNameRejected": true,
+    "RepeatedInstallCheckWithoutElevation": true,
+    "StopKeptDriverAndBroker": true,
+    "TemporaryPairsRemoved": true,
+    "InitialReservations": ["COM1", "COM6", "COM7"],
+    "FinalReservations": ["COM1", "COM6", "COM7"],
+    "RebootTested": false
+  },
+  "FrameworkCallers": {
+    "TargetFrameworks": ["net462", "net48"],
+    "Runtime": ".NET Framework 4.8.9345.0",
+    "ProcessArchitecture": "x86",
+    "BrokerArchitecture": "x64",
+    "CreateMilliseconds": [259.6527, 278.557],
+    "BinaryBytesEachDirection": 512,
+    "TransferPassed": true,
+    "CallerElevated": false
+  }
+}

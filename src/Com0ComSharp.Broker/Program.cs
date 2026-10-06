@@ -82,7 +82,7 @@ internal static class BrokerService
                     : await ManagementBrokerProtocol.ProcessAsync(package, line,
                         (command, allowLegacy, token) => new Com0ComClient(package,
                             new ClientOptions(elevation: ElevationMode.RequireAdministrator, allowLegacyDriver: allowLegacy)).ExecuteAsync(command, token),
-                        WindowsDiagnostics.GetPairs, () => StagedDriverPackage.IsInstalled(package), stop).ConfigureAwait(false);
+                        FastWindowsDevices.GetPairsForStop, () => StagedDriverPackage.IsInstalled(package), stop).ConfigureAwait(false);
                 using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true) { AutoFlush = true };
                 await writer.WriteLineAsync(JsonSerializer.Serialize(result)).ConfigureAwait(false);
             }

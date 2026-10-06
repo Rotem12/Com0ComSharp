@@ -26,11 +26,23 @@ public sealed class WindowsCommandRunner : ICom0ComCommandRunner
                 return new(command.Operation, 740, "Named pair creation requires Com0ComSharp.Tool.exe for one elevation request. Set ElevationHelperPath or run from an elevated installer.", FailureKind.ElevationRequired);
             using var setupTimeout = new CancellationTokenSource(options.Timeout);
             using var setupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, setupTimeout.Token);
-            var result = await NamedPairSetup.RunAsync(command,
+            var result = FastWindowsDevices.Supported && !command.UseStandardPortsClass
+                ? await FastWindowsDevices.CreateAsync(package, command, setupCancellation.Token).ConfigureAwait(false)
+                : await NamedPairSetup.RunAsync(command,
                 (step, token) => RunAsync(package, step, options, token),
                 WindowsDiagnostics.GetPairs, WindowsDiagnostics.GetUnavailableComPortNames, WindowsDiagnostics.GetPortDevices, setupCancellation.Token).ConfigureAwait(false);
             return result.Failure == FailureKind.Cancelled && setupTimeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested
                 ? result with { Failure = FailureKind.TimedOut } : result;
+        }
+        if (elevated && FastWindowsDevices.Supported && command.Operation == Com0ComOperation.RemovePair)
+        {
+            var removed = await FastWindowsDevices.TryRemoveAsync(command, cancellationToken).ConfigureAwait(false);
+            if (removed is not null) return removed;
+        }
+        if (command.Operation == Com0ComOperation.ChangePort)
+        {
+            command = AdaptDirectPortRename(command, WindowsDiagnostics.GetPairs());
+            arguments = command.ToArguments();
         }
         var directory = RuntimeCompatibility.CreateTemporaryDirectory("Com0ComSharp-");
         var log = Path.Combine(directory, "setup.log");
@@ -119,6 +131,14 @@ public sealed class WindowsCommandRunner : ICom0ComCommandRunner
         if (nativeArguments.Sum(a => encoding.GetByteCount(a) + 1) >= 1024) throw new ArgumentException("The setupc command line exceeds its upstream 1024-byte buffer. Use a shorter path.");
         RuntimeCompatibility.SetArguments(start, nativeArguments);
         return start;
+    }
+
+    internal static Com0ComCommand AdaptDirectPortRename(Com0ComCommand command, IReadOnlyList<VirtualPortPair> pairs)
+    {
+        if (command.PortA?.RealPortName is null || command.PortA.PortName is not null) return command;
+        var port = pairs.SelectMany(p => new[] { p.A, p.B }).FirstOrDefault(p => string.Equals(p?.Id, command.PortId, StringComparison.OrdinalIgnoreCase));
+        return port is not null && !port.PortName.Equals("COM#", StringComparison.OrdinalIgnoreCase)
+            ? command with { PortA = command.PortA with { PortName = ComPortNames.Normalize(command.PortA.RealPortName), RealPortName = null } } : command;
     }
 
     private static string ReadLog(string path)

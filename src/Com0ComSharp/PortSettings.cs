@@ -44,7 +44,7 @@ public sealed record PortSettings
 
     /// <summary>Use COM# for automatic allocation in Windows' standard Ports class.</summary>
     public string? PortName { get; init; }
-    /// <summary>Only supported by ChangePortAsync after a COM# port exists.</summary>
+    /// <summary>Renames an existing COM endpoint with ChangePortAsync.</summary>
     public string? RealPortName { get; init; }
     public bool? EmulateBaudRate { get; init; }
     public bool? EmulateOverrun { get; init; }

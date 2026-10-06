@@ -19,4 +19,6 @@ First use installs the driver and automatic-start broker with one Windows admini
 
 Port names accept `"COM21"`, `"21"`, or `21`. Use `CreatePair("COM21", "COM22")` for two connected ports. Set the actual baud rate when opening `SerialPort`.
 
+Version 0.7 creates ports directly through the installed broker. Repeated `CreateDevice()` calls measured about 0.27 seconds on the test PC.
+
 The legacy signed driver can be blocked by Windows 11 security policy. [Setup](docs/deployment.md) · [VSPE usage](docs/vspe-migration.md) · [.NET Framework](docs/framework-compatibility.md)

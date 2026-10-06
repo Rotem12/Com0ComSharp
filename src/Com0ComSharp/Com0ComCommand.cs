@@ -21,10 +21,18 @@ public sealed record Com0ComCommand
     public Com0ComCommand(Com0ComOperation operation, int? pairIndex = null, string? portId = null,
         PortSettings? portA = null, PortSettings? portB = null, string? pattern = null,
         bool deferDriverUpdate = false, int waitSeconds = 30)
+        : this(operation, false, pairIndex, portId, portA, portB, pattern, deferDriverUpdate, waitSeconds) { }
+
+    /// <summary>Optionally selects the standard Windows Ports class for named creation.</summary>
+    [SetsRequiredMembers]
+    public Com0ComCommand(Com0ComOperation operation, bool useStandardPortsClass, int? pairIndex = null, string? portId = null,
+        PortSettings? portA = null, PortSettings? portB = null, string? pattern = null,
+        bool deferDriverUpdate = false, int waitSeconds = 30)
     {
         Operation = operation; PairIndex = pairIndex; PortId = portId;
         PortA = portA; PortB = portB; Pattern = pattern;
         DeferDriverUpdate = deferDriverUpdate; WaitSeconds = waitSeconds;
+        UseStandardPortsClass = useStandardPortsClass;
     }
 
     public required Com0ComOperation Operation { get; init; }
@@ -35,11 +43,13 @@ public sealed record Com0ComCommand
     public string? Pattern { get; init; }
     public bool DeferDriverUpdate { get; init; }
     public int WaitSeconds { get; init; } = 30;
+    /// <summary>Uses the slower standard Windows Ports setup class when a consumer specifically requires that Device Manager category.</summary>
+    public bool UseStandardPortsClass { get; init; }
 
     public static Com0ComCommand InstallDriver() => new() { Operation = Com0ComOperation.InstallDriver };
     public static Com0ComCommand CreatePair(PortSettings? portA = null, PortSettings? portB = null, int? pairIndex = null, bool deferDriverUpdate = false)
         => new() { Operation = Com0ComOperation.CreatePair, PortA = portA, PortB = portB, PairIndex = pairIndex, DeferDriverUpdate = deferDriverUpdate };
-    /// <summary>Creates standard Windows COM ports with the requested names in one helper invocation.</summary>
+    /// <summary>Creates Windows COM ports with the requested names.</summary>
     public static Com0ComCommand CreateNamedPair(string portA, string portB, bool emulateBaudRate = false)
         => new() { Operation = Com0ComOperation.CreateNamedPair,
             PortA = new(portName: ComPortNames.Normalize(portA), emulateBaudRate: emulateBaudRate),

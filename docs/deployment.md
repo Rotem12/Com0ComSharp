@@ -22,4 +22,6 @@ int id = api.CreateDevice(21, true);
 
 Replace the NuGet package and both helpers together when updating. Older broker installations request one approval to update. Keep your native driver directory available to the application.
 
+Ports appear in com0com's Device Manager category and work with `SerialPort`. Advanced commands can set `UseStandardPortsClass: true` to use Windows' standard Ports category, which takes longer to create.
+
 `api.UninstallDriver()` removes all com0com pairs, the driver, and broker with administrator approval. The library never restarts Windows or changes its security settings.
