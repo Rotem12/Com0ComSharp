@@ -42,6 +42,7 @@ jobs:
         run: |
           & .artifacts/tool-net48/Com0ComSharp.Tool.exe diagnose
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item LICENSE .artifacts/tool-net48/
           Compress-Archive -Path .artifacts/tool-net48/* -DestinationPath .artifacts/Com0ComSharp.Tool.net48.zip -Force
       - name: Bundle matching helpers
         shell: pwsh
@@ -49,6 +50,12 @@ jobs:
           New-Item -ItemType Directory -Path .artifacts/helpers -Force | Out-Null
           Copy-Item .artifacts/tool/Com0ComSharp.Tool.exe .artifacts/helpers/
           Copy-Item .artifacts/broker/Com0ComSharp.Broker.exe .artifacts/helpers/
+          Copy-Item LICENSE .artifacts/helpers/
+          $taskRuntime = (Get-Content src/Com0ComSharp.Broker/bin/Release/net8.0-windows/win-x64/Com0ComSharp.Broker.runtimeconfig.json -Raw | ConvertFrom-Json).runtimeOptions.includedFrameworks[0].version
+          $taskCache = (dotnet nuget locals global-packages --list) -replace '^global-packages:\s*', ''
+          $taskRuntimePackage = Join-Path $taskCache "microsoft.netcore.app.runtime.win-x64/$taskRuntime"
+          New-Item -ItemType Directory -Path .artifacts/helpers/licenses -Force | Out-Null
+          Copy-Item "$taskRuntimePackage/LICENSE.TXT", "$taskRuntimePackage/THIRD-PARTY-NOTICES.TXT" .artifacts/helpers/licenses/
           Compress-Archive -Path .artifacts/helpers/* -DestinationPath .artifacts/Com0ComSharp.Helpers.win-x64.zip -Force
       - uses: actions/upload-artifact@v4
         with:
