@@ -47,16 +47,13 @@ Place the complete native driver package and the matching release's `Com0ComShar
 var api = new Com0ComApi(nativeDriverDirectory,
     new ClientOptions(allowLegacyDriver: true));
 
-var setup = api.InstallDriver();
-if (setup.RebootRequired) Console.WriteLine("Restart Windows before creating ports.");
-
 int id = api.CreateDevice("21", emulateBaudRate: true);
 api.DestroyDevice(id);
 api.Stop();            // Removes every pair, keeps driver and broker.
 api.UninstallDriver(); // Removes pairs, driver, and broker with elevation.
 ```
 
-`InstallDriver()` checks for both the registered driver and a responding broker service. It is idempotent when both are ready. The helper provides the UAC prompt; Windows may ask for consent or administrator credentials according to local policy. Once installed, the LocalSystem broker accepts allowlisted pair create/remove commands from local users, so normal device changes and `Stop()` need no elevation. `Stop()` has machine-wide effect. The library never restarts Windows.
+The first device-management call checks for the driver and responding broker service, then installs both if needed. `InstallDriver()` is optional when you want to inspect reboot status before creating ports. Windows shows the elevation prompt and may ask for consent or administrator credentials according to local policy. Once installed, the LocalSystem broker accepts allowlisted pair create/remove and configuration commands from local users, so normal device changes and `Stop()` need no elevation. `Stop()` has machine-wide effect. The library never restarts Windows.
 
 For managed deployments that provision software outside the application, the PowerShell setup and uninstall scripts remain available. The .NET Framework helper archive must be deployed with all its files; the modern x64 helper and broker are self-contained.
 

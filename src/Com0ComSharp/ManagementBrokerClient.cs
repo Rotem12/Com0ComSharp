@@ -15,6 +15,19 @@ internal static class ManagementBrokerClient
     internal static Task<CommandResult> ExecuteAsync(DriverPackage package, Com0ComCommand command, bool allowLegacy, CancellationToken cancellationToken)
         => SendAsync(package, command, false, allowLegacy, cancellationToken);
 
+    internal static async Task<BatchResult> ExecuteBatchAsync(DriverPackage package, IReadOnlyList<Com0ComCommand> commands, bool allowLegacy, CancellationToken cancellationToken)
+    {
+        var results = new List<CommandResult>();
+        foreach (var command in commands)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await ExecuteAsync(package, command, allowLegacy, cancellationToken).ConfigureAwait(false);
+            results.Add(result);
+            if (!result.Success) break;
+        }
+        return new(results, commands.Count);
+    }
+
     internal static Task<CommandResult> StopAllAsync(DriverPackage package, bool allowLegacy, CancellationToken cancellationToken)
         => SendAsync(package, null, true, allowLegacy, cancellationToken);
 
@@ -46,7 +59,7 @@ internal static class ManagementBrokerClient
         catch (Exception e) when (e is IOException or TimeoutException or JsonException or UnauthorizedAccessException)
         {
             return new(command?.Operation ?? Com0ComOperation.Help, -1,
-                "The non-elevated management service is not available. Install and start Com0ComSharp.Broker once from an elevated setup. " + e.Message,
+                "The non-elevated management service is not available. Deploy the matching helper and broker; the first device-management call installs them through Windows elevation. " + e.Message,
                 FailureKind.ElevationRequired);
         }
     }

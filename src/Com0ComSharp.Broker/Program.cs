@@ -101,7 +101,9 @@ internal static class BrokerService
         if (request.PackageHashes.Count != actual.Count || actual.Any(x => !request.PackageHashes.TryGetValue(x.Key, out var hash) || !string.Equals(hash, x.Value, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidDataException("The caller's driver package does not match the service's protected package.");
         if (request.Ping)
-            return new(Com0ComOperation.Help, 0, "The Com0ComSharp management service is available.", FailureKind.None);
+            return WindowsDiagnostics.IsDriverServiceInstalled()
+                ? new(Com0ComOperation.Help, 0, "The com0com driver and management service are available.", FailureKind.None)
+                : new(Com0ComOperation.Help, 2, "The com0com driver service is not registered.", FailureKind.ElevationRequired);
         var client = new Com0ComClient(package, new ClientOptions(elevation: ElevationMode.RequireAdministrator, allowLegacyDriver: request.AllowLegacy));
         if (request.StopAll)
         {
@@ -113,8 +115,8 @@ internal static class BrokerService
             return new(Com0ComOperation.RemovePair, 0, "All com0com pairs were removed; the driver remains installed.", FailureKind.None);
         }
         var command = request.Command ?? throw new InvalidDataException("A management command is required.");
-        if (command.Operation is not (Com0ComOperation.CreateNamedPair or Com0ComOperation.CreateNamedConnector or Com0ComOperation.RemovePair))
-            throw new InvalidDataException("The management service accepts only pair creation and removal.");
+        if (command.Operation is not (Com0ComOperation.CreateNamedPair or Com0ComOperation.CreateNamedConnector or Com0ComOperation.RemovePair or Com0ComOperation.ChangePort))
+            throw new InvalidDataException("The management service accepts only pair creation, removal, and port configuration.");
         _ = command.ToArguments();
         return await client.ExecuteAsync(command, cancellationToken).ConfigureAwait(false);
     }

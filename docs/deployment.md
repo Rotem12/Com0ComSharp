@@ -3,7 +3,7 @@
 ## Recommended flow
 
 1. Deploy the native driver package and matching `Com0ComSharp.Tool.exe` and `Com0ComSharp.Broker.exe` beside the application.
-2. Call `api.InstallDriver()`. It detects the driver and service, requests elevation if setup is needed, and installs both components. Check `RebootRequired` before creating ports.
+2. The first device-management call checks setup and installs the driver and broker if needed. Or call `api.InstallDriver()` explicitly if your app needs to inspect `RebootRequired` before creating ports.
 3. Create and verify ports, then perform an application-level serial handshake.
 4. Store the pair IDs/names your app owns. Remove those pairs during app uninstall; `Stop()` is machine-wide and clears all com0com pairs.
 
@@ -27,7 +27,7 @@ Driver staging and removal require administrator rights. Direct use of `setupc.e
 
 `CommandResult.Success` describes the native command, not device readiness. Staging does not start a device. A pair needs both specific endpoints healthy. `CreateNamedPair` additionally verifies names and both endpoint states. The CLI returns exit 2 when creation succeeded but readiness cannot be established.
 
-The [simple API](vspe-migration.md) installs the driver and broker through `InstallDriver()`. Afterward, `CreateDevice`, `DestroyDevice`, and `Stop` do not request elevation. `Stop()` destroys every machine-wide pair and leaves the driver and broker installed; `UninstallDriver()` removes all three components with elevation. Use the helper and broker from the same release as the library.
+The [simple API](vspe-migration.md) automatically installs the driver and broker on the first device-management call; `InstallDriver()` is optional. Afterward, `CreateDevice`, `DestroyDevice`, configuration calls, and `Stop` use the broker without elevation. `Stop()` destroys every machine-wide pair and leaves the driver and broker installed; `UninstallDriver()` removes all components with elevation. Use the helper and broker from the same release as the library.
 
 The UAC refusal, alternate-credentials, broker service install, and pipe transport paths need validation under actual deployment policies. API support does not prove a domain permits elevation. WDAC/AppLocker may reject the helper or unsigned setup utility before the kernel checks the driver.
 

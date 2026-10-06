@@ -29,8 +29,10 @@ public sealed class Com0ComApi
         if (string.IsNullOrWhiteSpace(broker) || !File.Exists(broker))
             throw new FileNotFoundException("Deploy the matching Com0ComSharp.Broker.exe beside the application. InstallDriver installs it as a service together with the driver.", broker);
         broker = Path.GetFullPath(broker);
-        var packageInstalled = WindowsDiagnostics.FindInstalledPackage() is not null;
-        if (packageInstalled && await ManagementBrokerClient.IsAvailableAsync(Client.Package, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false))
+        // The legacy package installer often stages the package in DriverStore
+        // without keeping its source under the old SOFTWARE\com0com path. The
+        // broker ping also checks that the protected package matches this app.
+        if (await ManagementBrokerClient.IsAvailableAsync(Client.Package, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false))
             return new(Com0ComOperation.InstallDriver, 0, "The com0com driver and Com0ComSharp management service are already installed.", FailureKind.None);
 
         var elevatedHelperWillInstallService = Client.Options.Elevation == ElevationMode.Prompt && Client.Options.ElevationHelperPath is not null;
@@ -111,9 +113,12 @@ public sealed class Com0ComApi
 
     public CommandResult DestroyDevice(int deviceIndex) => DestroyDeviceAsync(deviceIndex).GetAwaiter().GetResult();
     public async Task<CommandResult> DestroyDeviceAsync(int deviceIndex, CancellationToken cancellationToken = default)
-        => Check(WindowsDiagnostics.IsAdministrator()
+    {
+        await EnsureDriverInstalledAsync(cancellationToken).ConfigureAwait(false);
+        return Check(WindowsDiagnostics.IsAdministrator()
             ? await Client.DestroyPairAsync(deviceIndex, cancellationToken).ConfigureAwait(false)
             : await ManagementBrokerClient.ExecuteAsync(Client.Package, Com0ComCommand.RemovePair(deviceIndex), Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
+    }
     public CommandResult DestroyPair(int pairIndex) => DestroyDevice(pairIndex);
     public Task<CommandResult> DestroyPairAsync(int pairIndex, CancellationToken cancellationToken = default) => DestroyDeviceAsync(pairIndex, cancellationToken);
 
@@ -140,6 +145,7 @@ public sealed class Com0ComApi
     public CommandResult Stop() => StopAsync().GetAwaiter().GetResult();
     public async Task<CommandResult> StopAsync(CancellationToken cancellationToken = default)
     {
+        await EnsureDriverInstalledAsync(cancellationToken).ConfigureAwait(false);
         if (!WindowsDiagnostics.IsAdministrator())
             return Check(await ManagementBrokerClient.StopAllAsync(Client.Package, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
         foreach (var pair in GetDevices())
@@ -166,16 +172,25 @@ public sealed class Com0ComApi
     public EnvironmentReport GetEnvironment() => Client.GetEnvironment();
     public CommandResult ChangePort(string endpointId, PortSettings settings) => ChangePortAsync(endpointId, settings).GetAwaiter().GetResult();
     public async Task<CommandResult> ChangePortAsync(string endpointId, PortSettings settings, CancellationToken cancellationToken = default)
-        => Check(await Client.ChangePortAsync(endpointId, settings, cancellationToken).ConfigureAwait(false));
+    {
+        await EnsureDriverInstalledAsync(cancellationToken).ConfigureAwait(false);
+        return Check(WindowsDiagnostics.IsAdministrator()
+            ? await Client.ChangePortAsync(endpointId, settings, cancellationToken).ConfigureAwait(false)
+            : await ManagementBrokerClient.ExecuteAsync(Client.Package, Com0ComCommand.ChangePort(endpointId, settings), Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
+    }
 
     public BatchResult SetBaudRateEmulation(int deviceIndex, bool enabled)
         => SetBaudRateEmulationAsync(deviceIndex, enabled).GetAwaiter().GetResult();
     public async Task<BatchResult> SetBaudRateEmulationAsync(int deviceIndex, bool enabled, CancellationToken cancellationToken = default)
     {
+        await EnsureDriverInstalledAsync(cancellationToken).ConfigureAwait(false);
         var pair = GetDeviceInfo(deviceIndex);
         if (pair.A is null || pair.B is null) throw new InvalidOperationException("Both pair endpoints are required.");
         var settings = new PortSettings(emulateBaudRate: enabled);
-        var result = await Client.ExecuteBatchAsync(new[] { Com0ComCommand.ChangePort(pair.A.Id, settings), Com0ComCommand.ChangePort(pair.B.Id, settings) }, cancellationToken).ConfigureAwait(false);
+        var commands = new[] { Com0ComCommand.ChangePort(pair.A.Id, settings), Com0ComCommand.ChangePort(pair.B.Id, settings) };
+        var result = WindowsDiagnostics.IsAdministrator()
+            ? await Client.ExecuteBatchAsync(commands, cancellationToken).ConfigureAwait(false)
+            : await ManagementBrokerClient.ExecuteBatchAsync(Client.Package, commands, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false);
         result.ThrowIfFailed();
         return result;
     }
@@ -184,41 +199,17 @@ public sealed class Com0ComApi
 
     private async Task<CommandResult> CreateWithDriverIfNeededAsync(Com0ComCommand create, CancellationToken cancellationToken)
     {
-        // Registry/package discovery is read-only. Stage the driver only when no
-        // complete com0com package is registered, then create the port in the
-        // same typed plan so the elevation helper asks only once.
-        if (WindowsDiagnostics.FindInstalledPackage() is not null)
-            return Check(WindowsDiagnostics.IsAdministrator()
-                ? await Client.ExecuteAsync(create, cancellationToken).ConfigureAwait(false)
-                : await ManagementBrokerClient.ExecuteAsync(Client.Package, create, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
+        await EnsureDriverInstalledAsync(cancellationToken).ConfigureAwait(false);
+        return Check(WindowsDiagnostics.IsAdministrator()
+            ? await Client.ExecuteAsync(create, cancellationToken).ConfigureAwait(false)
+            : await ManagementBrokerClient.ExecuteAsync(Client.Package, create, Client.Options.AllowLegacyDriver, cancellationToken).ConfigureAwait(false));
+    }
 
-        if (string.IsNullOrWhiteSpace(Client.Options.ManagementBrokerPath) || !File.Exists(Client.Options.ManagementBrokerPath))
-            throw new FileNotFoundException("Deploy Com0ComSharp.Broker.exe. The first InstallDriver call installs both the driver and its management service.", Client.Options.ManagementBrokerPath);
-
-        if (Client.Options.Elevation == ElevationMode.Prompt && Client.Options.ElevationHelperPath is null && !WindowsDiagnostics.IsAdministrator())
-            throw new Com0ComException(new(create.Operation, 740,
-                "Deploy the matching Com0ComSharp.Tool.exe beside the application for one UAC approval covering driver installation and port creation.",
-                FailureKind.ElevationRequired));
-
-        var batch = await Client.ExecuteBatchAsync(new[] { Com0ComCommand.InstallDriver(), create }, cancellationToken).ConfigureAwait(false);
-        foreach (var result in batch.Results)
-        {
-            if (!result.Success) result.ThrowIfFailed();
-            if (result.RebootRequired)
-                throw new InvalidOperationException("Driver installation requires a Windows restart before the port can be created. Restart, then retry the operation.");
-        }
-        if (batch.Results.Count < 2)
-        {
-            if (batch.Results.Count == 0) throw new InvalidOperationException("The elevation helper did not complete driver installation.");
-            throw new InvalidOperationException("The elevation helper stopped before creating the port. Inspect the driver result before retrying.");
-        }
-        if (!(Client.Options.Elevation == ElevationMode.Prompt && Client.Options.ElevationHelperPath is not null)
-            && WindowsDiagnostics.IsAdministrator())
-        {
-            var broker = Client.Options.ManagementBrokerPath!;
-            ManagementBrokerInstaller.Install(Client.Package, broker, ManagementBrokerInstaller.HashFile(broker));
-        }
-        return Check(batch.Results[1]);
+    private async Task EnsureDriverInstalledAsync(CancellationToken cancellationToken)
+    {
+        var result = await InstallDriverAsync(cancellationToken).ConfigureAwait(false);
+        if (result.RebootRequired)
+            throw new InvalidOperationException("Driver installation requires a Windows restart before this operation can continue. Restart, then retry.");
     }
 
     private static ClientOptions DiscoverCompanions(ClientOptions? options)

@@ -59,6 +59,13 @@ public static class WindowsDiagnostics
         return null;
     }
 
+    internal static bool IsDriverServiceInstalled()
+    {
+        EnsureWindows();
+        using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\com0com");
+        return key is not null;
+    }
+
     public static IReadOnlyList<DeviceStatus> GetDevices()
     {
         EnsureWindows();
