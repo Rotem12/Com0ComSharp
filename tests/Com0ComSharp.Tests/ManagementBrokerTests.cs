@@ -59,6 +59,34 @@ public sealed class ManagementBrokerTests : IDisposable
         Assert.False(StagedDriverPackage.IsInstalled(package, infDirectory, _ => true));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SetupCanReuseItsProtectedSourceOrCopyADeploymentFile(bool sameSource)
+    {
+        var source = Path.Combine(directory, "setupc.exe");
+        var destination = sameSource ? source : Path.Combine(directory, "protected-setupc.exe");
+        var expected = File.ReadAllBytes(source);
+        ManagementBrokerInstaller.CopyForInstall(source, destination);
+        Assert.Equal(expected, File.ReadAllBytes(destination));
+        Assert.Equal(expected, File.ReadAllBytes(source));
+    }
+
+    [Fact]
+    public async Task SetupWaitsForAStoppedProcessToReleaseTheDestination()
+    {
+        var source = Path.Combine(directory, "setupc.exe");
+        var destination = Path.Combine(directory, "locked-broker.exe");
+        File.WriteAllText(destination, "previous executable");
+        using var busy = new FileStream(destination, FileMode.Open, FileAccess.Read, FileShare.None);
+        var copy = Task.Run(() => ManagementBrokerInstaller.CopyForInstall(source, destination));
+        await Task.Delay(200);
+        Assert.False(copy.IsCompleted);
+        busy.Dispose();
+        await copy;
+        Assert.Equal(File.ReadAllBytes(source), File.ReadAllBytes(destination));
+    }
+
     [Fact]
     public async Task ApiLifecycleUsesRealPipeTransportAndProtocolWithInMemoryDevices()
     {

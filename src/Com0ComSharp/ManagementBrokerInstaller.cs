@@ -29,9 +29,9 @@ internal static class ManagementBrokerInstaller
         var driverDirectory = Path.Combine(root, "Driver");
         Directory.CreateDirectory(driverDirectory);
         foreach (var name in DriverPackage.RequiredFiles)
-            File.Copy(Path.Combine(package.DirectoryPath, name), Path.Combine(driverDirectory, name), true);
+            CopyForInstall(Path.Combine(package.DirectoryPath, name), Path.Combine(driverDirectory, name));
         var serviceExecutable = Path.Combine(root, "Com0ComSharp.Broker.exe");
-        File.Copy(brokerSource, serviceExecutable, true);
+        CopyForInstall(brokerSource, serviceExecutable);
         VerifyFileHash(serviceExecutable, expectedBrokerHash);
 
         var protectedPackage = DriverPackage.Open(driverDirectory);
@@ -94,6 +94,18 @@ internal static class ManagementBrokerInstaller
         using var stream = File.OpenRead(path);
         using var sha = SHA256.Create();
         return RuntimeCompatibility.ToHexString(sha.ComputeHash(stream));
+    }
+
+    internal static void CopyForInstall(string source, string destination)
+    {
+        if (string.Equals(Path.GetFullPath(source), Path.GetFullPath(destination), StringComparison.OrdinalIgnoreCase)) return;
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (true)
+        {
+            try { File.Copy(source, destination, true); return; }
+            catch (IOException e) when ((e.HResult & 0xffff) is 32 or 33 && DateTime.UtcNow < deadline)
+            { Thread.Sleep(100); } // A stopped service can take a moment to release its executable.
+        }
     }
 
     private static void VerifyFileHash(string path, string expected)
