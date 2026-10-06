@@ -6,7 +6,7 @@ internal sealed record ManagementBrokerRequest(Dictionary<string, string> Packag
 
 internal static class ManagementBrokerProtocol
 {
-    internal const int Version = 2;
+    internal const int Version = 3; // Upgrade the installed broker to the faster creation path.
 
     internal static async Task<CommandResult> ProcessAsync(DriverPackage package, string json,
         Func<Com0ComCommand, bool, CancellationToken, Task<CommandResult>> execute,

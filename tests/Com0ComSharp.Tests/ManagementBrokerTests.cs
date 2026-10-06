@@ -286,10 +286,13 @@ public sealed class ManagementBrokerTests : IDisposable
         Assert.Equal(FailureKind.HelperFailed, (await host.Client().ProbeAsync(default)).Failure);
     }
 
-    [Fact]
-    public async Task OldBrokerProtocolRequiresOneUpdate()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(2)]
+    public async Task OldBrokerProtocolRequiresOneUpdate(int? oldVersion)
     {
-        using var host = new PipeHost(package) { Reply = JsonSerializer.Serialize(Success(Com0ComOperation.Help)) };
+        using var host = new PipeHost(package) { Reply = JsonSerializer.Serialize(
+            Success(oldVersion.HasValue ? Com0ComOperation.InstallDriver : Com0ComOperation.Help) with { BrokerProtocolVersion = oldVersion }) };
         Assert.Equal(FailureKind.NotInstalled, (await host.Client().ProbeAsync(default)).Failure);
         host.Reply = null;
         Assert.True((await host.Client().ProbeAsync(default)).Success);

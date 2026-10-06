@@ -47,7 +47,7 @@ public sealed class SimpleApiTests
         var result = await backend.CreateAsync("com3", "COM2", true);
         Assert.True(result.Success);
         Assert.Equal(18, result.CreatedPairIndex);
-        Assert.Equal(5, backend.Commands.Count);
+        Assert.Equal(3, backend.Commands.Count); // A is already standard; B's automatic COM2 already matches.
         Assert.Null(backend.Commands[0].PairIndex);
         Assert.All(backend.Commands.Skip(1), c => Assert.Contains(c.PortId, new[] { "CNCA18", "CNCB18" }));
         var created = backend.Pairs.Single(p => p.Index == 18);
@@ -56,6 +56,75 @@ public sealed class SimpleApiTests
         Assert.Equal("yes", created.A.Parameters["EmuBR"]);
         Assert.Equal("yes", created.B.Parameters["EmuBR"]);
         Assert.Equal("COM70", backend.Pairs.Single(p => p.Index == 0).A!.EffectiveName);
+    }
+
+    [Theory]
+    [InlineData("COM21", 2)]
+    [InlineData("COM2", 1)]
+    public async Task ConnectorInstallsInStandardClassAndSkipsRedundantChanges(string name, int calls)
+    {
+        var backend = new PairBackend();
+        var result = await backend.CreateConnectorAsync(name);
+        Assert.True(result.Success);
+        Assert.Equal(calls, backend.Commands.Count);
+        var install = backend.Commands[0];
+        Assert.Equal("COM#", install.PortA!.PortName);
+        Assert.Null(install.PortA.RealPortName); // The native installer ignores this parameter.
+        Assert.Equal("-", install.PortB!.PortName);
+        Assert.True(install.PortB.HiddenMode);
+        Assert.All(backend.Commands, c => Assert.Equal(0, c.WaitSeconds));
+        var pair = backend.Pairs.Single(p => p.Index == 18);
+        Assert.Equal(name, pair.A!.EffectiveName);
+        Assert.Equal("CNCB18", pair.B!.EffectiveName);
+        Assert.Equal("yes", pair.B.Parameters["HiddenMode"]);
+    }
+
+    [Theory]
+    [InlineData("COM21", "COM22", 4)]
+    [InlineData("COM2", "COM3", 2)]
+    public async Task PairAvoidsUnnecessaryReinstallationAndRenames(string a, string b, int calls)
+    {
+        var backend = new PairBackend();
+        var result = await backend.CreateAsync(a, b);
+        Assert.True(result.Success);
+        Assert.Equal(calls, backend.Commands.Count);
+        Assert.All(backend.Commands, c => Assert.Equal(0, c.WaitSeconds));
+        Assert.Single(backend.Commands, c => c.Operation == Com0ComOperation.ChangePort && c.PortA!.PortName == "COM#");
+        var pair = backend.Pairs.Single(p => p.Index == 18);
+        Assert.Equal(a, pair.A!.EffectiveName);
+        Assert.Equal(b, pair.B!.EffectiveName);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(28)] // Windows may publish an endpoint before binding its driver.
+    public async Task PendingNewDevicesBecomeHealthyBeforeNamingStarts(uint pendingProblem)
+    {
+        var backend = new PairBackend { PendingDeviceReads = 2, PendingProblem = pendingProblem };
+        var result = await backend.CreateAsync();
+        Assert.True(result.Success);
+        Assert.True(backend.ReadsBeforeFirstRename >= 3);
+        Assert.All(backend.Commands, c => Assert.Equal(0, c.WaitSeconds));
+    }
+
+    [Fact]
+    public async Task ExistingPairNameFailsBeforeAnyNativeWork()
+    {
+        var backend = new PairBackend();
+        var result = await backend.CreateConnectorAsync("COM70");
+        Assert.Equal(FailureKind.PortNameInUse, result.Failure);
+        Assert.Empty(backend.Commands);
+    }
+
+    [Fact]
+    public async Task CancellationDuringEndpointReadinessKeepsIdAndStartsNoRename()
+    {
+        using var cancel = new CancellationTokenSource();
+        var backend = new PairBackend { PendingDeviceReads = 2, AfterDeviceRead = cancel.Cancel };
+        var result = await backend.CreateAsync(cancellationToken: cancel.Token);
+        Assert.Equal(FailureKind.Cancelled, result.Failure);
+        Assert.Equal(18, result.CreatedPairIndex);
+        Assert.Single(backend.Commands);
     }
 
     [Fact]
@@ -77,7 +146,7 @@ public sealed class SimpleApiTests
         Assert.False(result.Success);
         Assert.Equal(FailureKind.ProcessFailed, result.Failure);
         Assert.Equal(18, result.CreatedPairIndex);
-        Assert.Equal(3, backend.Commands.Count); // Do not configure B after A failed verification.
+        Assert.Equal(2, backend.Commands.Count); // Do not configure B after A failed verification.
         Assert.Equal("CNCB18", backend.Pairs.Single(p => p.Index == 18).B!.EffectiveName);
     }
 
@@ -88,7 +157,7 @@ public sealed class SimpleApiTests
         var result = await backend.CreateAsync();
         Assert.Equal(FailureKind.ProcessFailed, result.Failure);
         Assert.Equal(18, result.CreatedPairIndex);
-        Assert.Equal(4, backend.Commands.Count);
+        Assert.Equal(3, backend.Commands.Count);
     }
 
     [Theory]
@@ -126,7 +195,7 @@ public sealed class SimpleApiTests
         var result = await backend.CreateAsync();
         Assert.Equal(expected, result.Failure);
         Assert.Equal(18, result.CreatedPairIndex);
-        Assert.Equal(5, backend.Commands.Count);
+        Assert.Single(backend.Commands); // A failed endpoint must not be renamed or restarted.
     }
 
     [Fact]
@@ -227,12 +296,29 @@ public sealed class SimpleApiTests
         public uint DeviceProblem;
         public string? InstallOutput;
         public Action? AfterCreate;
+        public Action? AfterDeviceRead;
+        public int PendingDeviceReads;
+        public uint PendingProblem;
+        public int DeviceReads, ReadsBeforeFirstRename;
 
         public Task<CommandResult> CreateAsync(string a = "COM21", string b = "COM22", bool baud = false, CancellationToken cancellationToken = default)
-            => NamedPairSetup.RunAsync(Com0ComCommand.CreateNamedPair(a, b, baud), RunAsync, () => Pairs, () => Reserved,
-                () => Pairs.SelectMany(p => new[] { p.A!, p.B! }).Select(p => new DeviceStatus(p.Id, "fixture", p.Id,
-                    p.Id == "CNCB18" && DeviceNameMismatch ? "COM99" : p.EffectiveName,
-                    p.Id == "CNCB18" ? DeviceProblem : 0, p.Id != "CNCB18" || DeviceProblem == 0)).ToArray(), cancellationToken);
+            => CreateCommandAsync(Com0ComCommand.CreateNamedPair(a, b, baud), cancellationToken);
+
+        public Task<CommandResult> CreateConnectorAsync(string name = "COM21")
+            => CreateCommandAsync(Com0ComCommand.CreateNamedConnector(name));
+
+        public Task<CommandResult> CreateCommandAsync(Com0ComCommand command, CancellationToken cancellationToken = default)
+            => NamedPairSetup.RunAsync(command with { WaitSeconds = PendingDeviceReads > 0 ? 1 : 0 }, RunAsync, () => Pairs,
+                pairs => Reserved.Concat(pairs.SelectMany(p => new[] { p.A!, p.B! }).Select(p => p.EffectiveName)).ToArray(),
+                () =>
+                {
+                    DeviceReads++;
+                    AfterDeviceRead?.Invoke();
+                    var pending = PendingDeviceReads-- > 0;
+                    return Pairs.SelectMany(p => new[] { p.A!, p.B! }).Select(p => new DeviceStatus(p.Id, "fixture", p.Id,
+                        p.Id == "CNCB18" && DeviceNameMismatch ? "COM99" : p.EffectiveName,
+                        pending ? PendingProblem : p.Id == "CNCB18" ? DeviceProblem : 0, !pending && (p.Id != "CNCB18" || DeviceProblem == 0))).ToArray();
+                }, cancellationToken);
 
         private Task<CommandResult> RunAsync(Com0ComCommand command, CancellationToken token)
         {
@@ -243,7 +329,10 @@ public sealed class SimpleApiTests
             if (command.Operation == Com0ComOperation.CreatePair)
             {
                 var baud = command.PortA!.EmulateBaudRate == true ? "yes" : "no";
-                var text = $"CNCA18 PortName=CNCA18,EmuBR={baud}\nCNCB18 PortName=CNCB18,EmuBR={baud}";
+                var used = new HashSet<string>(Pairs.SelectMany(p => new[] { p.A!.EffectiveName, p.B!.EffectiveName }).Concat(Reserved), StringComparer.OrdinalIgnoreCase);
+                var number = Enumerable.Range(1, 4096).First(n => !used.Contains("COM" + n.ToString(CultureInfo.InvariantCulture)));
+                var text = $"CNCA18 PortName=COM#,RealPortName=COM{number},EmuBR={baud}\nCNCB18 PortName=CNCB18,EmuBR={(command.PortB!.EmulateBaudRate == true ? "yes" : "no")}";
+                if (command.PortB.HiddenMode == true) text += ",HiddenMode=yes";
                 Pairs = Pairs.Concat(SetupOutputParser.ParsePairs(text)).ToArray();
                 AfterCreate?.Invoke();
                 return Task.FromResult(new CommandResult(command.Operation, 0, InstallOutput ?? text, FailureKind.None, Commands.Count == RebootStep));
@@ -260,6 +349,7 @@ public sealed class SimpleApiTests
             }
             else if (!IgnoreRename)
             {
+                if (ReadsBeforeFirstRename == 0) ReadsBeforeFirstRename = DeviceReads;
                 var name = command.PortA.RealPortName!;
                 var peer = old.Id == pair.A.Id ? pair.B! : pair.A;
                 Assert.NotEqual(name, peer.EffectiveName); // Catch a swapped-name collision in the implementation.
@@ -267,7 +357,7 @@ public sealed class SimpleApiTests
             }
             var updated = new VirtualPort(old.Id, values["PortName"], values);
             Pairs = Pairs.Select(p => p.Index != 18 ? p : old.Id == p.A!.Id ? p with { A = updated } : p with { B = updated }).ToArray();
-            if (DropAOnBConversion && Commands.Count == 4)
+            if (DropAOnBConversion && command.PortId == "CNCB18" && command.PortA.PortName == "COM#")
                 Pairs = Pairs.Select(p => p.Index == 18 ? p with { A = null } : p).ToArray();
             return Task.FromResult(new CommandResult(command.Operation, 0, "native change", FailureKind.None, Commands.Count == RebootStep));
         }

@@ -3,7 +3,7 @@
     <OutputType>Exe</OutputType>
     <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
     <AssemblyName>Com0ComSharp.Tool</AssemblyName>
-    <Version>0.6.0</Version>
+    <Version>0.6.1</Version>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
   </PropertyGroup>

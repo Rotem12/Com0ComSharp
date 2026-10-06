@@ -64,6 +64,25 @@ public static class WindowsDiagnostics
     {
         EnsureWindows();
         var handle = SetupDiGetClassDevsW(IntPtr.Zero, null, IntPtr.Zero, 0x6); // PRESENT | ALLCLASSES
+        return ReadDevices(handle);
+    }
+
+    // Both setup classes are declared by the signed package. Keep the broad
+    // diagnostic scan above for failed installations in other/unknown classes.
+    internal static IReadOnlyList<DeviceStatus> GetPortDevices()
+    {
+        EnsureWindows();
+        var results = new List<DeviceStatus>();
+        foreach (var classId in new[] { new Guid("df799e12-3c56-421b-b298-b6d3642bc878"), new Guid("4d36e978-e325-11ce-bfc1-08002be10318") })
+        {
+            var guid = classId;
+            results.AddRange(ReadDevices(SetupDiGetClassDevsW(ref guid, null, IntPtr.Zero, 0x2))); // PRESENT
+        }
+        return results;
+    }
+
+    private static IReadOnlyList<DeviceStatus> ReadDevices(IntPtr handle)
+    {
         if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
         try
         {
@@ -105,9 +124,12 @@ public static class WindowsDiagnostics
 
     /// <summary>Lists present endpoints and reads their configuration from the driver's registry keys.</summary>
     public static IReadOnlyList<VirtualPortPair> GetPairs()
+        => GetPairs(GetPortDevices());
+
+    internal static IReadOnlyList<VirtualPortPair> GetPairs(IReadOnlyList<DeviceStatus> devices)
     {
         var text = new StringBuilder();
-        foreach (var device in GetDevices().Where(d => d.PortId is not null))
+        foreach (var device in devices.Where(d => d.PortId is not null))
         {
             using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\com0com\Parameters\" + device.PortId);
             var name = key?.GetValue("PortName") as string ?? device.PortId!;
@@ -141,13 +163,16 @@ public static class WindowsDiagnostics
 
     /// <summary>Combines COM reservations, present serial mappings and com0com endpoints. Does not request elevation.</summary>
     public static IReadOnlyList<string> GetUnavailableComPortNames()
+        => GetUnavailableComPortNames(GetPairs());
+
+    internal static IReadOnlyList<string> GetUnavailableComPortNames(IReadOnlyList<VirtualPortPair> pairs)
     {
         var names = new HashSet<string>(GetReservedComPortNames(), StringComparer.OrdinalIgnoreCase);
         using var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DEVICEMAP\SERIALCOMM");
         if (key is not null)
             foreach (var value in key.GetValueNames())
                 if (key.GetValue(value) is string name) names.Add(name);
-        foreach (var pair in GetPairs())
+        foreach (var pair in pairs)
         {
             if (pair.A is not null) names.Add(pair.A.EffectiveName);
             if (pair.B is not null) names.Add(pair.B.EffectiveName);
@@ -192,6 +217,7 @@ public static class WindowsDiagnostics
     [DllImport("ntdll.dll", CharSet = CharSet.Unicode)] private static extern int RtlGetVersion(ref WindowsVersionInfo version);
     [DllImport("ntdll.dll")] private static extern int NtQuerySystemInformation(int informationClass, ref CodeIntegrityInfo info, uint length, out uint returnedLength);
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr SetupDiGetClassDevsW(IntPtr guid, string? enumerator, IntPtr window, uint flags);
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr SetupDiGetClassDevsW(ref Guid guid, string? enumerator, IntPtr window, uint flags);
     [DllImport("setupapi.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetupDiEnumDeviceInfo(IntPtr handle, uint index, ref DeviceInfo data);
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetupDiGetDeviceRegistryPropertyW(IntPtr handle, ref DeviceInfo data, uint property, out uint type, [Out] byte[] buffer, uint size, out uint required);
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetupDiGetDeviceInstanceIdW(IntPtr handle, ref DeviceInfo data, StringBuilder buffer, int size, out int required);

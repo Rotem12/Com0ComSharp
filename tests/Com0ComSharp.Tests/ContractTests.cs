@@ -63,6 +63,23 @@ public class ContractTests
     public void AllowsAutoAllocatedEndpoints() => Assert.Equal(new[] { "--silent", "install", "PortName=COM#", "PortName=COM#" }, Com0ComCommand.CreatePair(new() { PortName = "COM#" }, new() { PortName = "COM#" }).ToArguments());
 
     [Fact]
+    public void NamedInstallUsesTheInitialStandardClassForItsFirstEndpoint()
+    {
+        Assert.Equal(new[] { "--silent", "install", "PortName=COM#,EmuBR=no", "PortName=-,EmuBR=no" },
+            Com0ComCommand.CreateNamedPair("COM21", "COM22").ToArguments());
+        Assert.Equal(new[] { "--silent", "install", "PortName=COM#,EmuBR=no", "PortName=-,HiddenMode=yes" },
+            Com0ComCommand.CreateNamedConnector("COM21").ToArguments());
+    }
+
+    [Fact]
+    public void FocusedDiscoveryKeepsPresentKnownClassEndpoints()
+    {
+        var broad = WindowsDiagnostics.GetDevices().Where(d => d.PortId is not null).Select(d => d.InstanceId);
+        var focused = WindowsDiagnostics.GetPortDevices().Where(d => d.PortId is not null).Select(d => d.InstanceId);
+        Assert.Equal(broad.OrderBy(x => x, StringComparer.OrdinalIgnoreCase), focused.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void RejectsOutOfRangeNoiseAndPrecision()
     {
         foreach (var probability in new[] { -0.1m, 1m, 0.000000001m })

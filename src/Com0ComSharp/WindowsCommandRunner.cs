@@ -28,7 +28,7 @@ public sealed class WindowsCommandRunner : ICom0ComCommandRunner
             using var setupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, setupTimeout.Token);
             var result = await NamedPairSetup.RunAsync(command,
                 (step, token) => RunAsync(package, step, options, token),
-                WindowsDiagnostics.GetPairs, WindowsDiagnostics.GetUnavailableComPortNames, WindowsDiagnostics.GetDevices, setupCancellation.Token).ConfigureAwait(false);
+                WindowsDiagnostics.GetPairs, WindowsDiagnostics.GetUnavailableComPortNames, WindowsDiagnostics.GetPortDevices, setupCancellation.Token).ConfigureAwait(false);
             return result.Failure == FailureKind.Cancelled && setupTimeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested
                 ? result with { Failure = FailureKind.TimedOut } : result;
         }

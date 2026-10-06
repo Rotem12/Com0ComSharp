@@ -66,16 +66,16 @@ public sealed record Com0ComCommand
             case Com0ComOperation.InstallDriver: args.Add("preinstall"); break;
             case Com0ComOperation.CreateNamedPair:
                 ValidateNamedPair();
-                // This is the initial native step only. WindowsCommandRunner completes
-                // class conversion and naming using the actual allocated pair ID.
+                // Install A directly in the standard Ports class. Name it before
+                // converting B so automatic COM assignments cannot block one another.
                 args.Add("install");
-                args.Add((PortA! with { PortName = "-" }).ToParameterString());
+                args.Add((PortA! with { PortName = "COM#" }).ToParameterString());
                 args.Add((PortB! with { PortName = "-" }).ToParameterString());
                 break;
             case Com0ComOperation.CreateNamedConnector:
                 ValidateNamedConnector();
                 args.Add("install");
-                args.Add((PortA! with { PortName = "-" }).ToParameterString());
+                args.Add((PortA! with { PortName = "COM#" }).ToParameterString());
                 args.Add(PortB!.ToParameterString());
                 break;
             case Com0ComOperation.CreatePair:
