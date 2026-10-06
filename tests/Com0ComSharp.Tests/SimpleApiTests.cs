@@ -308,7 +308,9 @@ public sealed class SimpleApiTests
             => CreateCommandAsync(Com0ComCommand.CreateNamedConnector(name));
 
         public Task<CommandResult> CreateCommandAsync(Com0ComCommand command, CancellationToken cancellationToken = default)
-            => NamedPairSetup.RunAsync(command with { WaitSeconds = PendingDeviceReads > 0 ? 1 : 0 }, RunAsync, () => Pairs,
+            // This fixture tests ordering, not elapsed time. Leave room for a
+            // loaded CI runner to schedule its two simulated readiness polls.
+            => NamedPairSetup.RunAsync(command with { WaitSeconds = PendingDeviceReads > 0 ? 10 : 0 }, RunAsync, () => Pairs,
                 pairs => Reserved.Concat(pairs.SelectMany(p => new[] { p.A!, p.B! }).Select(p => p.EffectiveName)).ToArray(),
                 () =>
                 {
