@@ -90,6 +90,9 @@ internal static class RuntimeCompatibility
     {
         if (!cancellationToken.CanBeCanceled) return await task.ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
+        // Framework StreamReader often completes from its own buffer. Avoid a
+        // cancellation registration and Task.WhenAny for every buffered read.
+        if (task.IsCompleted) return await task.ConfigureAwait(false);
         var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using (cancellationToken.Register(() => cancelled.TrySetResult(true)))
         {

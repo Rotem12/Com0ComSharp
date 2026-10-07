@@ -143,16 +143,21 @@ internal static class FastWindowsDevices
                 })).Where(IsComName).Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             token.ThrowIfCancellationRequested();
             var timer = Stopwatch.StartNew();
+            var log = new StringBuilder();
             if (root is not null)
             {
                 var data = root.Data;
-                var reboot = await Task.Run(() => devices.Remove(ref data), CancellationToken.None).ConfigureAwait(false);
+                var reboot = await Task.Run(() => devices.Remove(ref data, index, log), CancellationToken.None).ConfigureAwait(false);
                 if (reboot) return new(command.Operation, 3010, "Restart Windows to finish removing the pair; its reservations are retained.", FailureKind.RebootRequired, true);
             }
-            while (WindowsDiagnostics.GetPortDevices().Any(d => d.PortId == "CNCA" + index || d.PortId == "CNCB" + index))
+            else if (devices.RemoveChildren(index))
+                return new(command.Operation, 3010, "Restart Windows to finish removing the endpoints; their reservations are retained.", FailureKind.RebootRequired, true);
+            // Check inactive records too, before releasing names or the retry
+            // ledger. A stopped endpoint is not necessarily fully uninstalled.
+            while (PairDevicesRemain(index))
             {
                 token.ThrowIfCancellationRequested();
-                if (timer.Elapsed >= TimeSpan.FromSeconds(Math.Max(1, command.WaitSeconds))) return new(command.Operation, -1, "An endpoint remains present; COM reservations were retained.", FailureKind.TimedOut);
+                if (timer.Elapsed >= TimeSpan.FromSeconds(Math.Max(1, command.WaitSeconds))) return new(command.Operation, -1, "A device record remains; COM reservations were retained.", FailureKind.TimedOut);
                 await Task.Delay(25, token).ConfigureAwait(false);
             }
             var stillUsed = new HashSet<string>(WindowsDiagnostics.GetPairs().Where(p => p.Index != index)
@@ -162,7 +167,7 @@ internal static class FastWindowsDevices
             foreach (var name in names.Where(n => !stillUsed.Contains(n))) Release(name);
             foreach (var id in new[] { "CNCA" + index, "CNCB" + index }) Registry.LocalMachine.DeleteSubKeyTree(Parameters + "\\" + id, false);
             Registry.LocalMachine.DeleteSubKeyTree(ManagedPairs + "\\" + index, false);
-            return new(command.Operation, 0, $"Removed pair {index} and its reservations in {timer.Elapsed.TotalMilliseconds:F1} ms.", FailureKind.None);
+            return new(command.Operation, 0, log + $"Removed pair {index} and its reservations in {timer.Elapsed.TotalMilliseconds:F1} ms.", FailureKind.None);
         }
         catch (OperationCanceledException) { return new(command.Operation, -1, "Removal cancelled; retry this pair ID to finish cleanup.", FailureKind.Cancelled); }
         catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException or System.Security.SecurityException)
@@ -281,6 +286,14 @@ internal static class FastWindowsDevices
         key.SetValue("ComDB", bits, RegistryValueKind.Binary);
     }
 
+    private static bool PairDevicesRemain(int index)
+    {
+        using var children = new ChildDevices(index);
+        if (children.Items.Count != 0) return true;
+        using var roots = new DeviceSet();
+        return roots.Roots().Any(r => r.Index == index);
+    }
+
     private static void Check(bool success) { if (!success) throw new Win32Exception(Marshal.GetLastWin32Error()); }
     private static void CheckCode(int code) { if (code != 0) throw new Win32Exception(code); }
 
@@ -347,11 +360,110 @@ internal static class FastWindowsDevices
             Check(SetupDiBuildDriverInfoList(Handle, ref data, 2));
             var driver = new DriverInfo { Size = (uint)Marshal.SizeOf<DriverInfo>(), Description = "", Manufacturer = "", Provider = "" };
             Check(SetupDiEnumDriverInfoW(Handle, ref data, 2, 0, ref driver));
-            Check(DiInstallDevice(IntPtr.Zero, Handle, ref data, ref driver, 2, out var reboot));
-            return reboot;
+            Check(SetupDiSetSelectedDriverW(Handle, ref data, ref driver));
+            // The signed bus INF has no device co-installer or finish-install
+            // action. Dispatch the installation request to its class installer
+            // and the Windows default handler for this one selected driver.
+            Check(SetupDiCallClassInstaller(2, Handle, ref data)); // DIF_INSTALLDEVICE
+            return NeedsReboot(Handle, ref data);
         }
-        internal bool Remove(ref DeviceInfo data) { Check(DiUninstallDevice(IntPtr.Zero, Handle, ref data, 0, out var reboot)); return reboot; }
+        internal bool Remove(ref DeviceInfo data, int index, StringBuilder log)
+        {
+            using var children = new ChildDevices(index);
+            // A converted standard COM endpoint can have a serial enumerator
+            // and grandchildren. Let Newdev walk any nontrivial subtree.
+            if (!children.AreSimpleLeaves(data.DevInst))
+            {
+                log.AppendLine("Recursive removal for a nontrivial device tree.");
+                Check(DiUninstallDevice(IntPtr.Zero, Handle, ref data, 0, out var reboot));
+                if (reboot) return true;
+            }
+            else
+            {
+                log.AppendLine("Root-first removal of two CNC endpoints.");
+                SetQuiet(Handle, ref data);
+                Check(SetupDiCallClassInstaller(5, Handle, ref data)); // DIF_REMOVE
+                if (NeedsReboot(Handle, ref data)) return true;
+            }
+            // Removing the parent stops both endpoints in one PnP operation.
+            // DIF_REMOVE still needs to delete their now-phantom registry nodes.
+            // Reopen by ID because the recursive fallback may have removed them.
+            return RemoveChildren(index);
+        }
+        internal bool RemoveChildren(int index)
+        {
+            using var children = new ChildDevices(index);
+            foreach (var child in children.Items)
+            {
+                var data = child;
+                // A failed recursive removal can leave a standard endpoint
+                // after its root disappeared. Its descendants still need the
+                // complete Newdev cleanup when retrying through the ledger.
+                if (data.ClassGuid != ClassId || CM_Get_Child(out _, data.DevInst, 0) != 0x0d)
+                {
+                    Check(DiUninstallDevice(IntPtr.Zero, children.Handle, ref data, 0, out var reboot));
+                    if (reboot) return true;
+                    continue;
+                }
+                SetQuiet(children.Handle, ref data);
+                Check(SetupDiCallClassInstaller(5, children.Handle, ref data));
+                if (NeedsReboot(children.Handle, ref data)) return true;
+            }
+            return false;
+        }
         public void Dispose() => SetupDiDestroyDeviceInfoList(Handle);
+    }
+
+    private sealed class ChildDevices : IDisposable
+    {
+        internal readonly IntPtr Handle;
+        internal readonly List<DeviceInfo> Items = new();
+        internal ChildDevices(int index)
+        {
+            Handle = SetupDiCreateDeviceInfoList(IntPtr.Zero, IntPtr.Zero);
+            if (Handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            try
+            {
+                foreach (var name in new[] { "CNCA" + index, "CNCB" + index })
+                {
+                    var data = new DeviceInfo { Size = (uint)Marshal.SizeOf<DeviceInfo>() };
+                    if (SetupDiOpenDeviceInfoW(Handle, "COM0COM\\PORT\\" + name, IntPtr.Zero, 0, ref data)) Items.Add(data);
+                    else if (unchecked((uint)Marshal.GetLastWin32Error()) != 0xe000020b) Check(false); // ERROR_NO_SUCH_DEVINST
+                }
+            }
+            catch { Dispose(); throw; }
+        }
+        internal bool AreSimpleLeaves(uint root)
+        {
+            if (Items.Count != 2 || Items.Any(d => d.ClassGuid != ClassId)) return false;
+            if (CM_Get_Child(out var first, root, 0) != 0) return false;
+            var seen = new HashSet<uint>();
+            for (var node = first; ;)
+            {
+                if (!seen.Add(node) || !Items.Any(d => d.DevInst == node)) return false;
+                var childStatus = CM_Get_Child(out _, node, 0);
+                if (childStatus != 0x0d) return false; // CR_NO_SUCH_DEVNODE: no grandchildren
+                var siblingStatus = CM_Get_Sibling(out var next, node, 0);
+                if (siblingStatus == 0x0d) return seen.Count == 2;
+                if (siblingStatus != 0) return false;
+                node = next;
+            }
+        }
+        public void Dispose() => SetupDiDestroyDeviceInfoList(Handle);
+    }
+    private static InstallParameters ReadParameters(IntPtr handle, ref DeviceInfo data)
+    {
+        var parameters = new InstallParameters { Size = (uint)Marshal.SizeOf<InstallParameters>(), DriverPath = "" };
+        Check(SetupDiGetDeviceInstallParamsW(handle, ref data, ref parameters));
+        return parameters;
+    }
+    private static bool NeedsReboot(IntPtr handle, ref DeviceInfo data) => RequiresReboot(ReadParameters(handle, ref data).Flags);
+    internal static bool RequiresReboot(uint flags) => (flags & (0x80 | 0x100)) != 0; // DI_NEEDRESTART | DI_NEEDREBOOT
+    private static void SetQuiet(IntPtr handle, ref DeviceInfo data)
+    {
+        var parameters = ReadParameters(handle, ref data);
+        parameters.Flags |= 0x800000; // DI_QUIETINSTALL
+        Check(SetupDiSetDeviceInstallParamsW(handle, ref data, ref parameters));
     }
 
     [StructLayout(LayoutKind.Sequential)] internal struct DeviceInfo { public uint Size; public Guid ClassGuid; public uint DevInst; public IntPtr Reserved; }
@@ -379,7 +491,11 @@ internal static class FastWindowsDevices
     [DllImport("setupapi.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetupDiBuildDriverInfoList(IntPtr handle, ref DeviceInfo data, uint type);
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetupDiEnumDriverInfoW(IntPtr handle, ref DeviceInfo data, uint type, uint index, ref DriverInfo driver);
     [DllImport("setupapi.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetupDiDestroyDeviceInfoList(IntPtr handle);
-    [DllImport("newdev.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DiInstallDevice(IntPtr window, IntPtr handle, ref DeviceInfo data, ref DriverInfo driver, uint flags, [MarshalAs(UnmanagedType.Bool)] out bool reboot);
+    [DllImport("setupapi.dll", SetLastError = true)] private static extern IntPtr SetupDiCreateDeviceInfoList(IntPtr classId, IntPtr window);
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetupDiOpenDeviceInfoW(IntPtr handle, string id, IntPtr window, uint flags, ref DeviceInfo data);
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetupDiSetSelectedDriverW(IntPtr handle, ref DeviceInfo data, ref DriverInfo driver);
+    [DllImport("cfgmgr32.dll")] private static extern uint CM_Get_Child(out uint child, uint parent, uint flags);
+    [DllImport("cfgmgr32.dll")] private static extern uint CM_Get_Sibling(out uint sibling, uint node, uint flags);
     [DllImport("newdev.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DiUninstallDevice(IntPtr window, IntPtr handle, ref DeviceInfo data, uint flags, [MarshalAs(UnmanagedType.Bool)] out bool reboot);
     [DllImport("msports.dll")] private static extern int ComDBOpen(out IntPtr database);
     [DllImport("msports.dll")] private static extern int ComDBClose(IntPtr database);

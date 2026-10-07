@@ -291,6 +291,7 @@ public sealed class ManagementBrokerTests : IDisposable
     [InlineData(2)]
     [InlineData(3)]
     [InlineData(4)]
+    [InlineData(5)]
     public async Task OldBrokerProtocolRequiresOneUpdate(int? oldVersion)
     {
         using var host = new PipeHost(package) { Reply = JsonSerializer.Serialize(

@@ -1,26 +1,121 @@
 {
-  "Date": "2026-10-06",
-  "Version": "0.7.0",
+  "Date": "2026-10-07",
+  "Version": "0.8.0",
   "WindowsBuild": "26200",
   "CallerElevated": false,
   "DriverModified": false,
   "SecuritySettingsChanged": false,
   "PreviousBroker": {
-    "Version": "0.6.1",
-    "ConnectorCreateMilliseconds": 5502.1516,
-    "ConnectorDestroyMilliseconds": 4106.0548,
-    "Samples": 1
-  },
-  "DirectBackend": {
-    "FirstConnectorCreateMilliseconds": 449.4879,
-    "FirstConnectorDestroyMilliseconds": 427.0639,
-    "RepeatedApiConnectorCreateMilliseconds": [271.9908, 264.5782, 281.2543, 263.4387, 262.7598, 261.7508],
-    "RepeatedApiConnectorDestroyMilliseconds": [420.3082, 419.5387, 412.0018, 410.3614, 428.5652, 414.1926],
-    "ApiPairCreateMilliseconds": 266.4977,
-    "CreateWithExistingOpenPairMilliseconds": [303.5213, 251.7427, 276.574],
-    "RenameAndBaudEmulationMilliseconds": 116.7618,
+    "Version": "0.7.0",
+    "RepeatedApiConnectorCreateMilliseconds": [
+      271.9908,
+      264.5782,
+      281.2543,
+      263.4387,
+      262.7598,
+      261.7508
+    ],
+    "RepeatedApiConnectorDestroyMilliseconds": [
+      420.3082,
+      419.5387,
+      412.0018,
+      410.3614,
+      428.5652,
+      414.1926
+    ],
     "StopThreeConnectorsMilliseconds": 1109.9395
   },
+  "DirectBackend": {
+    "FirstConnectorCreateMilliseconds": 271.9571,
+    "FirstConnectorDestroyMilliseconds": 160.8647,
+    "RepeatedApiConnectorCreateMilliseconds": [
+      143.1348,
+      139.3501,
+      190.5155,
+      168.312,
+      155.6386,
+      157.7331
+    ],
+    "RepeatedApiConnectorDestroyMilliseconds": [
+      144.6024,
+      211.1566,
+      190.3744,
+      160.5487,
+      159.1731,
+      151.5606
+    ],
+    "ApiPairCreateMilliseconds": 142.9002,
+    "CreateWithExistingOpenPairMilliseconds": [
+      148.282,
+      145.6582,
+      140.9892
+    ],
+    "RenameAndBaudEmulationMilliseconds": 76.766,
+    "ConvertedStandardPairDestroyMilliseconds": 379.2008,
+    "StopThreeConnectorsMilliseconds": 378.2724
+  },
+  "IsolatedNativeComparison": [
+    {
+      "Variant": "baseline",
+      "CreateMilliseconds": [
+        252.4199,
+        206.0718,
+        202.5441,
+        199.4994
+      ],
+      "DestroyMilliseconds": [
+        360.491,
+        331.9201,
+        323.027,
+        322.0445
+      ]
+    },
+    {
+      "Variant": "class-installer",
+      "CreateMilliseconds": [
+        118.8031,
+        105.0185,
+        106.6163,
+        102.4957
+      ],
+      "DestroyMilliseconds": [
+        316.1161,
+        303.8897,
+        309.5143,
+        311.9154
+      ]
+    },
+    {
+      "Variant": "root-first",
+      "CreateMilliseconds": [
+        189.9907,
+        211.6088,
+        203.7895,
+        205.5514
+      ],
+      "DestroyMilliseconds": [
+        130.152,
+        134.6119,
+        138.7773,
+        132.8219
+      ]
+    },
+    {
+      "Variant": "combined",
+      "CreateMilliseconds": [
+        122.2017,
+        111.4588,
+        113.0817,
+        113.7441
+      ],
+      "DestroyMilliseconds": [
+        127.4151,
+        130.614,
+        135.7033,
+        132.2114
+      ]
+    }
+  ],
   "Validation": {
     "NoRoutineUac": true,
     "SerialPortEnumeration": true,
@@ -30,17 +125,34 @@
     "DuplicateNameRejected": true,
     "RepeatedInstallCheckWithoutElevation": true,
     "StopKeptDriverAndBroker": true,
+    "RecursiveFallbackForConvertedStandardPorts": true,
     "TemporaryPairsRemoved": true,
-    "InitialReservations": ["COM1", "COM6", "COM7"],
-    "FinalReservations": ["COM1", "COM6", "COM7"],
+    "InitialReservations": [
+      "COM1",
+      "COM6",
+      "COM7"
+    ],
+    "FinalReservations": [
+      "COM1",
+      "COM6",
+      "COM7"
+    ],
+    "InitialDevnodesIncludingInactive": [],
+    "FinalDevnodesIncludingInactive": [],
     "RebootTested": false
   },
   "FrameworkCallers": {
-    "TargetFrameworks": ["net462", "net48"],
+    "TargetFrameworks": [
+      "net462",
+      "net48"
+    ],
     "Runtime": ".NET Framework 4.8.9345.0",
     "ProcessArchitecture": "x86",
     "BrokerArchitecture": "x64",
-    "CreateMilliseconds": [259.6527, 278.557],
+    "CreateMilliseconds": [
+      155.5154,
+      149.5432
+    ],
     "BinaryBytesEachDirection": 512,
     "TransferPassed": true,
     "CallerElevated": false

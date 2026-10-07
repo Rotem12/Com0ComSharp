@@ -6,7 +6,7 @@ internal sealed record ManagementBrokerRequest(Dictionary<string, string> Packag
 
 internal static class ManagementBrokerProtocol
 {
-    internal const int Version = 5; // Managed creation/removal using the staged driver.
+    internal const int Version = 6; // Targeted class install and root-first removal.
 
     internal static async Task<CommandResult> ProcessAsync(DriverPackage package, string json,
         Func<Com0ComCommand, bool, CancellationToken, Task<CommandResult>> execute,

@@ -6,6 +6,24 @@ namespace Com0ComSharp.Tests;
 
 public class FastWindowsDevicesTests
 {
+    [Theory]
+    [InlineData(0u, false)]
+    [InlineData(0x800000u, false)]
+    [InlineData(0x80u, true)]
+    [InlineData(0x100u, true)]
+    [InlineData(0x800180u, true)]
+    public void NativeRestartFlagsAreReported(uint flags, bool expected)
+        => Assert.Equal(expected, FastWindowsDevices.RequiresReboot(flags));
+
+    [Fact]
+    public async Task BufferedFrameworkReadsStillHonorCancellationAndFailures()
+    {
+        using var source = new CancellationTokenSource();
+        Assert.Equal(42, await RuntimeCompatibility.WaitAsync(Task.FromResult(42), source.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RuntimeCompatibility.WaitAsync(Task.FromResult(42), new CancellationToken(true)));
+        await Assert.ThrowsAsync<IOException>(() => RuntimeCompatibility.WaitAsync(Task.FromException<int>(new IOException("read failed")), source.Token));
+    }
+
     [Fact]
     public void ExistingCommandConstructorRemainsBinaryCompatible()
         => Assert.NotNull(typeof(Com0ComCommand).GetConstructor(new[] { typeof(Com0ComOperation), typeof(int?), typeof(string),
